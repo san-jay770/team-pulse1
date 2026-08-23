@@ -13,7 +13,7 @@ import os
 from datetime import datetime, date, timedelta
 
 app = Flask(__name__)
-app.secret_key = "TEAM_PULSE_CHANGE_THIS_SECRET"
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 app.permanent_session_lifetime = timedelta(days=3650)
 
 DATABASE = "team_pulse.db"

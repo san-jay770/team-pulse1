@@ -2923,10 +2923,12 @@ def add_team():
 # START
 # ============================================================
 
-if __name__ == "__main__":
+# Initialize database for both local and production
+init_db()
+seed_data()
 
-    init_db()
-    seed_data()
+
+if __name__ == "__main__":
 
     print()
     print("=" * 60)

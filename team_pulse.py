@@ -16,8 +16,18 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 app.permanent_session_lifetime = timedelta(days=3650)
 
-DATABASE = "team_pulse.db"
-UPLOAD_FOLDER = "uploads"
+# DATABASE_PATH / UPLOAD_FOLDER can be pointed at a mounted persistent
+# disk (Render Disk / Railway Volume) via environment variables.
+# Without this, Render/Railway's default filesystem is EPHEMERAL —
+# it resets on every redeploy or restart, wiping the SQLite file and
+# uploaded files back to the seeded demo data. See the README note
+# in DEPLOY_NOTES below for how to set this up.
+DATABASE = os.environ.get("DATABASE_PATH", "team_pulse.db")
+UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "uploads")
+
+_db_dir = os.path.dirname(DATABASE)
+if _db_dir:
+    os.makedirs(_db_dir, exist_ok=True)
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
@@ -257,6 +267,37 @@ def seed_data():
 
     if existing > 0:
         return
+
+    _insert_default_data()
+
+
+def wipe_all_data():
+
+    conn = db()
+
+    # Delete in dependency order so foreign keys don't block it
+    conn.execute("DELETE FROM activities")
+    conn.execute("DELETE FROM hit_points")
+    conn.execute("DELETE FROM suggestions")
+    conn.execute("DELETE FROM doubts")
+    conn.execute("DELETE FROM tasks")
+    conn.execute("DELETE FROM team_members")
+    conn.execute("DELETE FROM roles")
+    conn.execute("DELETE FROM teams")
+    conn.execute("DELETE FROM users")
+
+    conn.commit()
+    conn.close()
+
+
+def refresh_backup_data():
+    """Wipe every table and reload the original demo/backup data."""
+
+    wipe_all_data()
+    _insert_default_data()
+
+
+def _insert_default_data():
 
     # --------------------------------------------------------
     # TEAMS
@@ -546,9 +587,20 @@ body {
 }
 
 .logo {
-    font-size:23px;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-size:22px;
     font-weight:900;
+    letter-spacing:0.3px;
     margin:10px 15px 30px;
+}
+
+.logo-icon {
+    width:24px;
+    height:24px;
+    flex-shrink:0;
+    color:#38bdf8;
 }
 
 .logo span {
@@ -556,16 +608,29 @@ body {
 }
 
 .nav {
-    display:block;
+    display:flex;
+    align-items:center;
+    gap:13px;
     color:#dbeafe;
     text-decoration:none;
-    padding:13px 15px;
+    padding:12px 15px;
     border-radius:12px;
     margin:6px 0;
+    font-size:14.5px;
+    font-weight:500;
+    transition:background 0.15s ease, color 0.15s ease;
 }
 
 .nav:hover {
     background:#ffffff20;
+    color:#ffffff;
+}
+
+.nav-icon {
+    width:19px;
+    height:19px;
+    flex-shrink:0;
+    opacity:0.9;
 }
 
 .main {
@@ -618,6 +683,81 @@ h1 {
     font-size:32px;
     font-weight:900;
     margin-top:12px;
+}
+
+a.stat-card {
+    display:block;
+    text-decoration:none;
+    color:#172033;
+    cursor:pointer;
+    transition:transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+a.stat-card:hover {
+    transform:translateY(-4px);
+    box-shadow:0 14px 30px #0f172a1f;
+}
+
+.user-row {
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    justify-content:space-between;
+    gap:14px;
+    padding:16px;
+    border-radius:16px;
+    background:#f8fafc;
+    margin-bottom:14px;
+}
+
+.user-info b {
+    font-size:16px;
+}
+
+.user-info .user-email {
+    color:#64748b;
+    font-size:13px;
+}
+
+.user-actions {
+    display:flex;
+    gap:10px;
+}
+
+.action-box {
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    width:88px;
+    padding:14px 8px;
+    border-radius:14px;
+    color:white;
+    text-decoration:none;
+    font-weight:bold;
+    font-size:12px;
+    text-align:center;
+    box-shadow:0 6px 16px #0f172a1a;
+    transition:transform 0.15s ease, box-shadow 0.15s ease;
+    cursor:pointer;
+}
+
+.action-box:hover {
+    transform:translateY(-3px);
+    box-shadow:0 10px 22px #0f172a26;
+}
+
+.action-box .action-icon {
+    font-size:22px;
+    margin-bottom:4px;
+}
+
+.action-box.password {
+    background:#2563eb;
+}
+
+.action-box.delete {
+    background:#ef4444;
 }
 
 .stat-label {
@@ -869,49 +1009,59 @@ def page(title, body):
     <aside class="sidebar" id="sidebar">
 
         <div class="logo">
-            ⚡ TEAM <span>PULSE</span>
+            <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            TEAM <span>PULSE</span>
         </div>
 
         <a class="nav" href="/dashboard">
-            🏠 Dashboard
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            Dashboard
         </a>
 
         <a class="nav" href="/tasks">
-            📋 Tasks
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/></svg>
+            Tasks
         </a>
 
         <a class="nav" href="/doubts">
-            💬 Doubts
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+            Doubts
         </a>
 
         <a class="nav" href="/suggestions">
-            💡 Suggestions
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.3A7 7 0 0 0 12 2z"/></svg>
+            Suggestions
         </a>
 
         <a class="nav" href="/hit-points">
-            ⭐ Hit Points
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            Hit Points
         </a>
 
         {% if role in ["SUPER_ADMIN","ADMIN"] %}
         <a class="nav" href="/add-task">
-            ➕ Add Task
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            Add Task
         </a>
         {% endif %}
 
         {% if role == "SUPER_ADMIN" %}
         <a class="nav" href="/users">
-            👥 Users
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Users
         </a>
 
         <a class="nav" href="/add-team">
-            🏢 Add Team
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+            Add Team
         </a>
         {% endif %}
 
         <br>
 
         <a class="nav" href="/logout">
-            🚪 Logout
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Logout
         </a>
 
     </aside>
@@ -1040,6 +1190,12 @@ def login():
 
     error = ""
 
+    info = (
+        "🔄 Backup data refreshed. Log back in with the default demo accounts."
+        if request.args.get("refreshed")
+        else ""
+    )
+
     if request.method == "POST":
 
         email = request.form["email"].lower().strip()
@@ -1099,6 +1255,10 @@ def login():
 
         <p style="color:red">
             {error}
+        </p>
+
+        <p style="color:#10b981">
+            {info}
         </p>
 
         <form method="POST" action="/login">
@@ -1260,6 +1420,20 @@ def dashboard():
 
     team = get_team_for_user(user["id"])
 
+    users_open = (
+        '<a class="card stat-card" href="/users">'
+        if role == "SUPER_ADMIN"
+        else '<div class="card">'
+    )
+    users_close = "</a>" if role == "SUPER_ADMIN" else "</div>"
+
+    teams_open = (
+        '<a class="card stat-card" href="/add-team">'
+        if role == "SUPER_ADMIN"
+        else '<div class="card">'
+    )
+    teams_close = "</a>" if role == "SUPER_ADMIN" else "</div>"
+
     body = f"""
 
     <h1>Good Morning, {user["name"]} 👋</h1>
@@ -1270,7 +1444,7 @@ def dashboard():
 
     <div class="grid">
 
-        <div class="card">
+        {users_open}
             👥
             <div class="stat-number">
                 {users_count}
@@ -1278,9 +1452,9 @@ def dashboard():
             <div class="stat-label">
                 Users
             </div>
-        </div>
+        {users_close}
 
-        <div class="card">
+        {teams_open}
             🏢
             <div class="stat-number">
                 {teams_count}
@@ -1288,9 +1462,9 @@ def dashboard():
             <div class="stat-label">
                 Teams
             </div>
-        </div>
+        {teams_close}
 
-        <div class="card">
+        <a class="card stat-card" href="/tasks">
             📋
             <div class="stat-number">
                 {tasks_count}
@@ -1298,9 +1472,9 @@ def dashboard():
             <div class="stat-label">
                 Tasks
             </div>
-        </div>
+        </a>
 
-        <div class="card">
+        <a class="card stat-card" href="/doubts">
             💬
             <div class="stat-number">
                 {doubts_count}
@@ -1308,9 +1482,9 @@ def dashboard():
             <div class="stat-label">
                 Doubts
             </div>
-        </div>
+        </a>
 
-        <div class="card">
+        <a class="card stat-card" href="/suggestions">
             💡
             <div class="stat-number">
                 {suggestions_count}
@@ -1318,9 +1492,9 @@ def dashboard():
             <div class="stat-label">
                 Suggestions
             </div>
-        </div>
+        </a>
 
-        <div class="card">
+        <a class="card stat-card" href="/hit-points">
             ⭐
             <div class="stat-number">
                 {hits_count}
@@ -1328,7 +1502,7 @@ def dashboard():
             <div class="stat-label">
                 Hit Points
             </div>
-        </div>
+        </a>
 
     </div>
 
@@ -2512,6 +2686,8 @@ def users_page():
 
     conn.close()
 
+    refreshed = request.args.get("refreshed")
+
     body = """
 
     <h1>👥 User Management</h1>
@@ -2520,24 +2696,45 @@ def users_page():
         Manage Team Pulse users.
     </div>
 
+    """
+
+    if refreshed:
+
+        body += """
+
+        <div class="card"
+        style="border:2px solid #10b981">
+            <p style="color:#10b981;margin:0">
+                🔄 Backup data refreshed — all records were reset
+                back to the default demo data.
+            </p>
+        </div>
+
+        """
+
+    body += """
+
     <div class="card">
+
+    <div style="
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px">
 
     <a class="btn"
     href="/add-user">
         + Add User
     </a>
 
-    <br><br>
+    <a class="btn yellow"
+    href="/refresh-backup"
+    onclick="return confirm('Refresh backup data? This will erase ALL current users, teams, tasks, doubts, suggestions and hit points, and reload the original demo data. This cannot be undone.')">
+        🔄 Refresh Backup Data
+    </a>
 
-    <div style="overflow-x:auto">
+    </div>
 
-    <table width="100%">
-
-    <tr>
-        <th>Name</th>
-        <th>Email</th>
-        <th>Action</th>
-    </tr>
+    <br>
 
     """
 
@@ -2545,43 +2742,66 @@ def users_page():
 
         body += f"""
 
-        <tr>
+        <div class="user-row">
 
-            <td>{u["name"]}</td>
+            <div class="user-info">
+                <b>{u["name"]}</b><br>
+                <span class="user-email">{u["email"]}</span>
+            </div>
 
-            <td>{u["email"]}</td>
+            <div class="user-actions">
 
-            <td>
+                <a class="action-box password"
+                href="/password/{u["id"]}">
+                    <span class="action-icon">🔐</span>
+                    Password
+                </a>
 
-            <a class="btn"
-            href="/password/{u["id"]}">
-                🔐 Password
-            </a>
+                <a class="action-box delete"
+                href="/delete-user/{u["id"]}"
+                onclick="return confirm('Delete this user? This cannot be undone.')">
+                    <span class="action-icon">🗑️</span>
+                    Delete
+                </a>
 
-            <a class="btn"
-            style="background:#ef4444"
-            href="/delete-user/{u["id"]}"
-            onclick="return confirm('Delete this user? This cannot be undone.')">
-                🗑️ Delete
-            </a>
+            </div>
 
-            </td>
-
-        </tr>
+        </div>
 
         """
 
     body += """
-
-    </table>
-
-    </div>
 
     </div>
 
     """
 
     return page("Users", body)
+
+
+# ============================================================
+# REFRESH BACKUP DATA
+# ============================================================
+
+@app.route("/refresh-backup")
+@role_required("SUPER_ADMIN")
+def refresh_backup():
+
+    current = current_user()
+
+    refresh_backup_data()
+
+    add_activity(
+        f"{current['name']} refreshed backup data — all records reset to demo data",
+        "🔄"
+    )
+
+    # The account that triggered this may no longer exist post-reset,
+    # so send them back to login to re-authenticate against the
+    # freshly-seeded accounts.
+    session.clear()
+
+    return redirect("/login?refreshed=1")
 
 
 # ============================================================

@@ -246,7 +246,7 @@ def init_db():
                     UNIQUE(email, team_id)
                 );
                 INSERT INTO users_migrated (id, name, email, password, role, team_id, points, status, created_at)
-                SELECT id, name, email, password, role, team_id, points, status, created_at FROM users;
+                SELECT id, name, email, password_hash, 'TEAM_MEMBER', NULL, 0, 'Active', created_at FROM users;
                 DROP TABLE users;
                 ALTER TABLE users_migrated RENAME TO users;
                 """)

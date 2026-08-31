@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}Suggestions & Feedback - Team Pulse{% endblock %}
+{% block header_title %}Suggestions & Feedback{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>Team Suggestions & Feedback</h1>
+        <p>Propose process improvements, feedback ideas, and view admin reviews.</p>
+    </div>
+</div>
+
+<!-- Submit Suggestion Card -->
+<div class="card" style="margin-bottom: 28px;">
+    <div class="card-header">
+        <h2 class="card-title">Submit a New Suggestion</h2>
+    </div>
+    <form action="{{ url_for('suggestions_list') }}" method="POST">
+        <div class="form-group">
+            <label for="suggestion" class="form-label">Your Suggestion or Process Improvement</label>
+            <textarea 
+                id="suggestion" 
+                name="suggestion" 
+                class="form-textarea" 
+                placeholder="Detail your recommendation, workflow optimization idea, or feedback..." 
+                required
+            ></textarea>
+        </div>
+        <div style="display:flex; justify-content:flex-end;">
+            <button type="submit" class="btn btn-primary">Submit Suggestion</button>
+        </div>
+    </form>
+</div>
+
+<!-- Filter Toolbar -->
+<div class="filter-card">
+    <form action="{{ url_for('suggestions_list') }}" method="GET" class="filter-form">
+        <div class="filter-item">
+            <input 
+                type="text" 
+                name="q" 
+                class="form-control" 
+                placeholder="Search suggestions..." 
+                value="{{ q or '' }}"
+            >
+        </div>
+        <div class="filter-item">
+            <select name="status" class="form-select">
+                <option value="">All Statuses</option>
+                <option value="New" {% if status_filter == 'New' %}selected{% endif %}>New</option>
+                <option value="Reviewed" {% if status_filter == 'Reviewed' %}selected{% endif %}>Reviewed</option>
+                <option value="Accepted" {% if status_filter == 'Accepted' %}selected{% endif %}>Accepted</option>
+                <option value="Rejected" {% if status_filter == 'Rejected' %}selected{% endif %}>Rejected</option>
+            </select>
+        </div>
+        <div style="display:flex; gap:8px;">
+            <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+            <a href="{{ url_for('suggestions_list') }}" class="btn btn-secondary btn-sm">Reset</a>
+        </div>
+    </form>
+</div>
+
+<!-- Suggestions List -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Submitted Suggestions List</h2>
+        <span class="badge badge-info">{{ suggestions|length }} Suggestion(s)</span>
+    </div>
+
+    {% if suggestions %}
+    <div style="display:flex; flex-direction:column; gap:20px;">
+        {% for sug in suggestions %}
+        <div style="border:1px solid var(--border-color); border-radius:var(--radius-md); padding:20px; background-color:var(--bg-main);">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+                <div>
+                    <span class="badge {% if sug.status == 'Accepted' %}badge-completed{% elif sug.status == 'Rejected' %}badge-high{% elif sug.status == 'Reviewed' %}badge-reviewed{% else %}badge-new{% endif %}">
+                        {{ sug.status }}
+                    </span>
+                    <span style="font-size:0.85rem; color:var(--text-muted); margin-left:8px;">
+                        By <strong>{{ sug.author }}</strong> ({{ sug.team_name }}) on {{ sug.created_at[:16] if sug.created_at else '-' }}
+                    </span>
+                </div>
+            </div>
+
+            <!-- Suggestion Content -->
+            <div style="font-size:0.95rem; color:var(--text-main); font-weight:500; margin-bottom:14px; white-space:pre-wrap;">
+                {{ sug.suggestion }}
+            </div>
+
+            <!-- Admin Response View -->
+            {% if sug.response %}
+            <div style="background-color:white; border-left:4px solid var(--secondary); padding:14px 18px; border-radius:var(--radius-sm); margin-top:12px;">
+                <div style="font-size:0.8rem; font-weight:700; color:var(--secondary); margin-bottom:4px; text-transform:uppercase;">
+                    Admin Response & Outcome (Updated: {{ sug.updated_at[:16] if sug.updated_at else '' }}):
+                </div>
+                <div style="color:var(--text-main); font-size:0.92rem; white-space:pre-wrap;">
+                    {{ sug.response }}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Admin Review Form for Admin & Super Admin -->
+            {% if current_user and current_user.role in ['SUPER_ADMIN', 'ADMIN'] %}
+            <form action="{{ url_for('suggestion_review', sug_id=sug.id) }}" method="POST" style="margin-top:16px; background-color:white; padding:16px; border-radius:var(--radius-sm); border:1px solid var(--border-color);">
+                <div style="font-weight:700; font-size:0.85rem; margin-bottom:10px; color:var(--text-main);">Admin Review Action</div>
+                <div class="form-grid" style="grid-template-columns: 1fr 2fr; gap:12px; margin-bottom:10px;">
+                    <div>
+                        <label class="form-label" style="font-size:0.8rem;">Change Status</label>
+                        <select name="status" class="form-select">
+                            <option value="Reviewed" {% if sug.status == 'Reviewed' %}selected{% endif %}>Reviewed</option>
+                            <option value="Accepted" {% if sug.status == 'Accepted' %}selected{% endif %}>Accepted</option>
+                            <option value="Rejected" {% if sug.status == 'Rejected' %}selected{% endif %}>Rejected</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label" style="font-size:0.8rem;">Response Remarks</label>
+                        <input type="text" name="response" class="form-control" placeholder="Optional comments..." value="{{ sug.response or '' }}">
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-secondary btn-sm">Update Review</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted); padding:10px;">No suggestions submitted yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

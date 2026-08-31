@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}{% if user %}Edit User{% else %}Add User{% endif %} - Team Pulse{% endblock %}
+{% block header_title %}{% if user %}Edit User{% else %}Assign / Add User to Team{% endif %}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>{% if user %}Edit User: {{ user.name }}{% else %}Assign / Add User to Team{% endif %}</h1>
+        <p>{% if user %}Update account credentials, team assignment, or active status.{% else %}Add a new user or assign an existing member to another team workspace.{% endif %}</p>
+    </div>
+    <div class="page-header-actions">
+        <a href="{{ url_for('users_list') }}" class="btn btn-secondary">&larr; Back to Users</a>
+    </div>
+</div>
+
+<div class="card" style="max-width: 700px; margin: 0 auto;">
+    <form action="{% if user %}{{ url_for('user_edit', user_id=user.id) }}{% else %}{{ url_for('user_add') }}{% endif %}" method="POST" id="userForm">
+        
+        <div class="form-group">
+            <label for="email" class="form-label">
+                Email Address * 
+                {% if not user %}
+                <span style="font-weight:normal; font-size:0.8rem; color:var(--text-muted);">(Type an existing email to assign to a new team)</span>
+                {% endif %}
+            </label>
+            <input 
+                type="email" 
+                id="email" 
+                name="email" 
+                class="form-control" 
+                value="{{ user.email if user else (preset_email or '') }}" 
+                placeholder="e.g. john@teampulse.com" 
+                list="existingUsersList"
+                required
+                autocomplete="off"
+            >
+            {% if existing_users %}
+            <datalist id="existingUsersList">
+                {% for eu in existing_users %}
+                <option value="{{ eu.email }}">{{ eu.name }} ({{ eu.current_teams or 'Unassigned' }})</option>
+                {% endfor %}
+            </datalist>
+            {% endif %}
+
+            <!-- Dynamic existing user detection banner -->
+            <div id="existingUserBanner" style="display:none; margin-top:10px; padding:10px 14px; background:#EFF6FF; border:1px solid #93C5FD; border-radius:var(--radius-md); font-size:0.85rem; color:#1E40AF;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <svg style="width:18px;height:18px;color:#2563EB;flex-shrink:0;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <div>
+                        <strong>Existing member found: <span id="foundUserName"></span></strong>
+                        <div style="font-size:0.8rem; color:#3B82F6; margin-top:2px;">Currently in: <span id="foundUserTeams"></span>. Password is optional (their existing login credentials will be preserved).</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="name" class="form-label">Full Name *</label>
+            <input 
+                type="text" 
+                id="name" 
+                name="name" 
+                class="form-control" 
+                value="{{ user.name if user else '' }}" 
+                placeholder="e.g. John Doe" 
+                required
+            >
+        </div>
+
+        <div class="form-group">
+            <label for="password" class="form-label" id="passwordLabel">
+                Password {% if user %}<span style="font-weight:normal; color:var(--text-muted);">(Leave blank to keep unchanged)</span>{% else %}<span id="passwordRequiredNote" style="font-weight:normal; color:var(--text-muted);">(Required for new users, optional for existing)</span>{% endif %}
+            </label>
+            <div class="password-input-group">
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    class="form-control" 
+                    placeholder="••••••••" 
+                    {% if not user %}data-new-required="true"{% endif %}
+                >
+                <button type="button" class="password-toggle-btn" data-target="password">Show</button>
+            </div>
+        </div>
+
+        <div class="form-grid">
+            <div class="form-group">
+                <label for="role" class="form-label">User Role *</label>
+                <select id="role" name="role" class="form-select" required>
+                    {% if current_user.role == 'SUPER_ADMIN' %}
+                    <option value="SUPER_ADMIN" {% if user and user.role == 'SUPER_ADMIN' %}selected{% endif %}>Super Admin</option>
+                    {% endif %}
+                    <option value="ADMIN" {% if user and user.role == 'ADMIN' %}selected{% endif %}>Team Admin</option>
+                    <option value="TEAM_MEMBER" {% if not user or user.role == 'TEAM_MEMBER' %}selected{% endif %}>Team Member</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="team_id" class="form-label">Assigned Team *</label>
+                <select id="team_id" name="team_id" class="form-select" required>
+                    <option value="">-- Select Team --</option>
+                    {% for team in teams %}
+                    <option value="{{ team.id }}" {% if (user and user.team_id == team.id) or (preset_team_id|string == team.id|string) or (current_user.role == 'ADMIN' and current_user.team_id == team.id) %}selected{% endif %}>
+                        {{ team.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        {% if user %}
+        <div class="form-group">
+            <label for="status" class="form-label">Account Status</label>
+            <select id="status" name="status" class="form-select">
+                <option value="Active" {% if user.status == 'Active' %}selected{% endif %}>Active</option>
+                <option value="Inactive" {% if user.status == 'Inactive' %}selected{% endif %}>Inactive</option>
+            </select>
+        </div>
+        {% endif %}
+
+        <div style="display:flex; justify-content:flex-end; gap:12px; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border-color);">
+            <a href="{{ url_for('users_list') }}" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary" id="submitUserBtn">
+                {% if user %}Update User{% else %}Assign / Create User{% endif %}
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}

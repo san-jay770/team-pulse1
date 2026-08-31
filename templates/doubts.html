@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Doubts & Q&A - Team Pulse{% endblock %}
+{% block header_title %}Doubts & Q&A{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>Doubts & Question Resolution</h1>
+        <p>Ask technical questions, get guidance from team leads, and view answered doubts.</p>
+    </div>
+</div>
+
+<!-- Submit New Doubt Form for Members / All Users -->
+<div class="card" style="margin-bottom: 28px;">
+    <div class="card-header">
+        <h2 class="card-title">Ask a New Question</h2>
+    </div>
+    <form action="{{ url_for('doubts_list') }}" method="POST">
+        <div class="form-group">
+            <label for="question" class="form-label">What is your question or block?</label>
+            <textarea 
+                id="question" 
+                name="question" 
+                class="form-textarea" 
+                placeholder="Describe what you are trying to solve or clarify..." 
+                required
+            ></textarea>
+        </div>
+        <div style="display:flex; justify-content:flex-end;">
+            <button type="submit" class="btn btn-primary">Submit Question</button>
+        </div>
+    </form>
+</div>
+
+<!-- Filter Bar -->
+<div class="filter-card">
+    <form action="{{ url_for('doubts_list') }}" method="GET" class="filter-form">
+        <div class="filter-item">
+            <input 
+                type="text" 
+                name="q" 
+                class="form-control" 
+                placeholder="Search questions..." 
+                value="{{ q or '' }}"
+            >
+        </div>
+        <div class="filter-item">
+            <select name="status" class="form-select">
+                <option value="">All Statuses</option>
+                <option value="Open" {% if status_filter == 'Open' %}selected{% endif %}>Open</option>
+                <option value="Answered" {% if status_filter == 'Answered' %}selected{% endif %}>Answered</option>
+            </select>
+        </div>
+        <div style="display:flex; gap:8px;">
+            <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+            <a href="{{ url_for('doubts_list') }}" class="btn btn-secondary btn-sm">Reset</a>
+        </div>
+    </form>
+</div>
+
+<!-- Doubts Cards / List -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Questions & Answers Log</h2>
+        <span class="badge badge-info">{{ doubts|length }} Question(s)</span>
+    </div>
+
+    {% if doubts %}
+    <div style="display:flex; flex-direction:column; gap:20px;">
+        {% for doubt in doubts %}
+        <div style="border:1px solid var(--border-color); border-radius:var(--radius-md); padding:20px; background-color:var(--bg-main);">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+                <div>
+                    <span class="badge {% if doubt.status == 'Answered' %}badge-answered{% else %}badge-open{% endif %}">
+                        {{ doubt.status }}
+                    </span>
+                    <span style="font-size:0.85rem; color:var(--text-muted); margin-left:8px;">
+                        Asked by <strong>{{ doubt.asker }}</strong> ({{ doubt.team_name }}) on {{ doubt.created_at[:16] if doubt.created_at else '-' }}
+                    </span>
+                </div>
+            </div>
+
+            <!-- Question Text -->
+            <div style="font-size:1rem; font-weight:600; color:var(--text-main); margin-bottom:12px; white-space:pre-wrap;">
+                {{ doubt.question }}
+            </div>
+
+            <!-- Answer Section -->
+            {% if doubt.answer %}
+            <div style="background-color:white; border-left:4px solid var(--success); padding:14px 18px; border-radius:var(--radius-sm); margin-top:12px;">
+                <div style="font-size:0.8rem; font-weight:700; color:var(--success); margin-bottom:4px; text-transform:uppercase;">
+                    Answer & Guidance ({{ doubt.answered_at[:16] if doubt.answered_at else '' }}):
+                </div>
+                <div style="color:var(--text-main); font-size:0.92rem; white-space:pre-wrap;">
+                    {{ doubt.answer }}
+                </div>
+            </div>
+            {% else %}
+            <!-- Answer Input Form for Admins & Super Admins -->
+            {% if current_user and current_user.role in ['SUPER_ADMIN', 'ADMIN'] %}
+            <form action="{{ url_for('doubt_answer', doubt_id=doubt.id) }}" method="POST" style="margin-top:16px;">
+                <div class="form-group" style="margin-bottom:10px;">
+                    <textarea name="answer" class="form-textarea" placeholder="Write answer or guidance for this doubt..." required style="min-height:70px;"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">Submit Answer</button>
+            </form>
+            {% else %}
+            <div style="font-size:0.85rem; color:var(--text-muted); font-style:italic; margin-top:8px;">
+                Awaiting response from team admin.
+            </div>
+            {% endif %}
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted); padding:10px;">No questions submitted yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

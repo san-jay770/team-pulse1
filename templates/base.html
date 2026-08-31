@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Team Pulse - Team Task Management & Performance Monitoring System">
+    <title>{% block title %}Team Pulse{% endblock %}</title>
+
+    <!-- Google Fonts Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- CSS Stylesheet -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+<div class="app-layout">
+    <!-- Sidebar Overlay for Mobile -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-brand">
+                <div class="brand-icon">TP</div>
+                <span>TEAM PULSE</span>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-label">Main Menu</div>
+
+            <a href="{{ url_for('dashboard') }}" class="nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 00-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                <span>Dashboard</span>
+            </a>
+
+            {% if current_user and current_user.role in ['SUPER_ADMIN', 'ADMIN'] %}
+            <a href="{{ url_for('users_list') }}" class="nav-item {% if request.endpoint in ['users_list', 'user_add', 'user_edit'] %}active{% endif %}">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                <span>Users</span>
+            </a>
+            {% endif %}
+
+            {% if current_user and current_user.role == 'SUPER_ADMIN' %}
+            <a href="{{ url_for('teams_list') }}" class="nav-item {% if request.endpoint in ['teams_list', 'team_add', 'team_edit'] %}active{% endif %}">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                <span>Teams</span>
+            </a>
+            {% endif %}
+
+            <a href="{{ url_for('tasks_list') }}" class="nav-item {% if request.endpoint in ['tasks_list', 'task_add', 'task_edit'] %}active{% endif %}">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+                <span>Tasks</span>
+            </a>
+
+            <a href="{{ url_for('doubts_list') }}" class="nav-item {% if request.endpoint == 'doubts_list' %}active{% endif %}">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                <span>Doubts</span>
+            </a>
+
+            <a href="{{ url_for('suggestions_list') }}" class="nav-item {% if request.endpoint == 'suggestions_list' %}active{% endif %}">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                <span>Suggestions</span>
+            </a>
+
+            <a href="{{ url_for('leaderboard') }}" class="nav-item {% if request.endpoint == 'leaderboard' %}active{% endif %}">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
+                <span>Leaderboard</span>
+            </a>
+
+            {% if current_user and current_user.role == 'SUPER_ADMIN' %}
+            <div class="nav-label">Analytics & System</div>
+
+            <a href="{{ url_for('activities_list') }}" class="nav-item {% if request.endpoint == 'activities_list' %}active{% endif %}">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                <span>Activities</span>
+            </a>
+
+            <a href="{{ url_for('reports') }}" class="nav-item {% if request.endpoint == 'reports' %}active{% endif %}">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                <span>Reports</span>
+            </a>
+            {% endif %}
+
+            <div class="nav-label">Account</div>
+
+            <a href="{{ url_for('profile') }}" class="nav-item {% if request.endpoint == 'profile' %}active{% endif %}">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                <span>Profile</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            {% if current_user %}
+            <div class="user-quick-profile">
+                <div class="avatar-circle">
+                    {{ current_user.name[:1].upper() }}
+                </div>
+                <div class="user-quick-info">
+                    <div class="user-name">{{ current_user.name }}</div>
+                    <div class="user-role-badge">{{ current_user.role.replace('_', ' ') }}</div>
+                    {% if user_teams and user_teams|length > 1 %}
+                    <div style="font-size: 0.72rem; color: #94A3B8; margin-top: 2px;">{{ user_teams|length }} Teams Assigned</div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </aside>
+
+    <!-- Main Content Wrapper -->
+    <div class="main-wrapper">
+        <!-- Top Navbar -->
+        <header class="navbar-top">
+            <div class="navbar-left">
+                <button class="menu-toggle" id="menuToggle" aria-label="Toggle navigation">
+                    <svg style="width:24px;height:24px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                </button>
+                <div class="page-title">
+                    {% block header_title %}Team Pulse{% endblock %}
+                </div>
+            </div>
+
+            <div class="navbar-right">
+                {% if current_user %}
+                {% if user_teams and user_teams|length > 1 %}
+                <div class="team-switcher-dropdown" style="position: relative; display: inline-block;">
+                    <button type="button" class="team-switcher-btn" id="teamSwitcherBtn" style="display: flex; align-items: center; gap: 8px; background: rgba(37,99,235,0.1); color: var(--primary); border: 1px solid rgba(37,99,235,0.25); padding: 6px 12px; border-radius: var(--radius-md); font-size: 0.85rem; font-weight: 600; cursor: pointer;">
+                        <svg style="width:16px;height:16px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                        <span>Switch Workspace ({{ user_teams|length }})</span>
+                        <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </button>
+                    <div class="team-switcher-menu" id="teamSwitcherMenu" style="display:none; position: absolute; right: 0; top: calc(100% + 6px); background: white; min-width: 230px; border-radius: var(--radius-md); box-shadow: var(--shadow-lg); border: 1px solid var(--border-color); z-index: 1000; padding: 6px 0;">
+                        <div style="padding: 8px 14px; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; border-bottom: 1px solid var(--border-color);">
+                            Your Workspaces
+                        </div>
+                        {% for t in user_teams %}
+                        <a href="{{ url_for('switch_team', team_id=t.team_id) }}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; color: {% if t.team_id == current_user.team_id %}var(--primary){% else %}var(--text-main){% endif %}; font-weight: {% if t.team_id == current_user.team_id %}700{% else %}500{% endif %}; font-size: 0.88rem; background: {% if t.team_id == current_user.team_id %}var(--primary-light){% else %}transparent{% endif %};">
+                            <span>{{ t.team_name }}</span>
+                            {% if t.team_id == current_user.team_id %}
+                            <span style="font-size: 0.72rem; background: var(--primary); color: white; padding: 2px 6px; border-radius: 4px;">Active</span>
+                            {% else %}
+                            <span style="font-size: 0.72rem; color: var(--text-muted);">{{ t.role.replace('_', ' ') }}</span>
+                            {% endif %}
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <span class="role-pill {% if current_user.role == 'SUPER_ADMIN' %}role-super-admin{% elif current_user.role == 'ADMIN' %}role-admin{% else %}role-team-member{% endif %}">
+                    {{ current_user.role.replace('_', ' ') }}
+                </span>
+                <a href="{{ url_for('logout') }}" class="logout-btn">
+                    <svg style="width:16px;height:16px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                    <span>Logout</span>
+                </a>
+                {% endif %}
+            </div>
+        </header>
+
+        <!-- Page Main Content Area -->
+        <main class="content-container">
+            <!-- Flash Message Banner -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="alerts-wrapper">
+                        {% for category, message in messages %}
+                            <div class="alert alert-{{ category if category in ['success', 'danger', 'warning', 'info'] else 'info' }}">
+                                <span>{{ message }}</span>
+                                <button class="alert-close" type="button">&times;</button>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+</div>
+
+<!-- JavaScript Application Bundle -->
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

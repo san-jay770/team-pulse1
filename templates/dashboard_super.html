@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}Super Admin Dashboard - Team Pulse{% endblock %}
+{% block header_title %}Super Admin Overview{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>Welcome, {{ current_user.name if current_user else 'Super Admin' }}!</h1>
+        <p>System performance monitoring, metrics overview & administrative shortcuts.</p>
+    </div>
+    <div class="page-header-actions" style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a href="{{ url_for('team_add') }}" class="btn btn-secondary btn-sm">+ Add Team</a>
+        <a href="{{ url_for('user_add') }}" class="btn btn-secondary btn-sm">+ Add User</a>
+        <a href="{{ url_for('task_add') }}" class="btn btn-primary btn-sm">+ Add Task</a>
+        <a href="{{ url_for('reports') }}" class="btn btn-secondary btn-sm">View Reports</a>
+    </div>
+</div>
+
+<!-- Metrics Statistics Grid -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-header">
+            <span class="stat-title">Total Teams</span>
+            <div class="stat-icon">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.total_teams }}</div>
+        <div class="stat-subtitle">Active departments</div>
+    </div>
+
+    <div class="stat-card stat-purple">
+        <div class="stat-header">
+            <span class="stat-title">Total Admins</span>
+            <div class="stat-icon" style="background:#F5F3FF; color:#7C3AED;">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.total_admins }}</div>
+        <div class="stat-subtitle">Admins & Super Admins</div>
+    </div>
+
+    <div class="stat-card stat-cyan">
+        <div class="stat-header">
+            <span class="stat-title">Total Members</span>
+            <div class="stat-icon" style="background:#E0F2FE; color:#0EA5E9;">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.total_members }}</div>
+        <div class="stat-subtitle">Registered team members</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-header">
+            <span class="stat-title">Total Tasks</span>
+            <div class="stat-icon">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.total_tasks }}</div>
+        <div class="stat-subtitle">All time task count</div>
+    </div>
+
+    <div class="stat-card stat-orange">
+        <div class="stat-header">
+            <span class="stat-title">Pending Tasks</span>
+            <div class="stat-icon" style="background:#FEF3C7; color:#F59E0B;">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.pending_tasks }}</div>
+        <div class="stat-subtitle">In progress or pending</div>
+    </div>
+
+    <div class="stat-card stat-green">
+        <div class="stat-header">
+            <span class="stat-title">Completed Tasks</span>
+            <div class="stat-icon" style="background:#DCFCE7; color:#16A34A;">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.completed_tasks }}</div>
+        <div class="stat-subtitle">Successfully resolved</div>
+    </div>
+
+    <div class="stat-card stat-orange">
+        <div class="stat-header">
+            <span class="stat-title">Open Doubts</span>
+            <div class="stat-icon" style="background:#FEF3C7; color:#F59E0B;">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.open_doubts }}</div>
+        <div class="stat-subtitle">Out of {{ stats.total_doubts }} total doubts</div>
+    </div>
+
+    <div class="stat-card stat-purple">
+        <div class="stat-header">
+            <span class="stat-title">Suggestions</span>
+            <div class="stat-icon" style="background:#F5F3FF; color:#7C3AED;">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.total_suggestions }}</div>
+        <div class="stat-subtitle">Feedback submitted</div>
+    </div>
+</div>
+
+<!-- Team Performance Section -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Team Performance Overview</h2>
+        <a href="{{ url_for('teams_list') }}" class="btn btn-secondary btn-sm">Manage Teams &rarr;</a>
+    </div>
+
+    {% if team_perf %}
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Team Name</th>
+                    <th>Total Tasks</th>
+                    <th>Completed</th>
+                    <th>Progress</th>
+                    <th>Completion %</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for team in team_perf %}
+                <tr>
+                    <td>
+                        <strong style="color:var(--text-main);">{{ team.name }}</strong>
+                    </td>
+                    <td>{{ team.total }}</td>
+                    <td><span class="badge badge-completed">{{ team.done }} Done</span></td>
+                    <td>
+                        <div class="progress-container">
+                            <div class="progress-track">
+                                <div class="progress-fill" style="width: {{ team.pct }}%;"></div>
+                            </div>
+                        </div>
+                    </td>
+                    <td><strong>{{ team.pct }}%</strong></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted);">No team performance metrics recorded yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

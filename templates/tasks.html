@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block title %}Task Management - Team Pulse{% endblock %}
+{% block header_title %}Task Management{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>Tasks & Deliverables</h1>
+        <p>Monitor project tasks, update task statuses, and assign deliverables.</p>
+    </div>
+    {% if current_user and current_user.role in ['SUPER_ADMIN', 'ADMIN'] %}
+    <div class="page-header-actions">
+        <a href="{{ url_for('task_add') }}" class="btn btn-primary">+ Create New Task</a>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Task Filters Bar -->
+<div class="filter-card">
+    <form action="{{ url_for('tasks_list') }}" method="GET" class="filter-form">
+        <div class="filter-item">
+            <input 
+                type="text" 
+                name="q" 
+                class="form-control" 
+                placeholder="Search task title..." 
+                value="{{ q or '' }}"
+            >
+        </div>
+
+        {% if current_user.role == 'SUPER_ADMIN' %}
+        <div class="filter-item">
+            <select name="team" class="form-select">
+                <option value="">All Teams</option>
+                {% for team in teams %}
+                <option value="{{ team.id }}" {% if team_filter|string == team.id|string %}selected{% endif %}>{{ team.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+
+        <div class="filter-item">
+            <select name="status" class="form-select">
+                <option value="">All Statuses</option>
+                <option value="Pending" {% if status_filter == 'Pending' %}selected{% endif %}>Pending</option>
+                <option value="In Progress" {% if status_filter == 'In Progress' %}selected{% endif %}>In Progress</option>
+                <option value="Completed" {% if status_filter == 'Completed' %}selected{% endif %}>Completed</option>
+            </select>
+        </div>
+
+        <div class="filter-item">
+            <select name="priority" class="form-select">
+                <option value="">All Priorities</option>
+                <option value="Low" {% if priority_filter == 'Low' %}selected{% endif %}>Low</option>
+                <option value="Medium" {% if priority_filter == 'Medium' %}selected{% endif %}>Medium</option>
+                <option value="High" {% if priority_filter == 'High' %}selected{% endif %}>High</option>
+            </select>
+        </div>
+
+        <div style="display:flex; gap:8px;">
+            <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+            <a href="{{ url_for('tasks_list') }}" class="btn btn-secondary btn-sm">Reset</a>
+        </div>
+    </form>
+</div>
+
+<!-- Task List Table -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Tasks Overview</h2>
+        <span class="badge badge-info">{{ tasks|length }} Task(s) Found</span>
+    </div>
+
+    {% if tasks %}
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Task Title</th>
+                    <th>Team</th>
+                    <th>Assigned To</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Due Date</th>
+                    <th>Update Status</th>
+                    {% if current_user.role in ['SUPER_ADMIN', 'ADMIN'] %}
+                    <th style="text-align: right;">Actions</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in tasks %}
+                <tr>
+                    <td>
+                        <strong style="color:var(--text-main); font-size:0.95rem;">{{ task.title }}</strong>
+                        {% if task.description %}
+                        <div style="font-size:0.82rem; color:var(--text-muted); font-weight:normal; max-width:300px; white-space:normal;">
+                            {{ task.description }}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td>{{ task.team_name or 'Unassigned' }}</td>
+                    <td>
+                        {% if task.assignee %}
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <div class="avatar-circle" style="width:24px; height:24px; font-size:0.7rem;">
+                                {{ task.assignee[:1].upper() }}
+                            </div>
+                            <span>{{ task.assignee }}</span>
+                        </div>
+                        {% else %}
+                        <span style="color:var(--text-muted);">Unassigned</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {% if task.priority == 'High' %}badge-high{% elif task.priority == 'Medium' %}badge-medium{% else %}badge-low{% endif %}">
+                            {{ task.priority }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge {% if task.status == 'Completed' %}badge-completed{% elif task.status == 'In Progress' %}badge-in-progress{% else %}badge-pending{% endif %}">
+                            {{ task.status }}
+                        </span>
+                    </td>
+                    <td>{{ task.due_date if task.due_date else '-' }}</td>
+                    <td>
+                        <!-- Inline Status Update Form -->
+                        <form action="{{ url_for('task_update_status', task_id=task.id) }}" method="POST" style="display:inline-flex; align-items:center; gap:4px;">
+                            <select name="status" class="form-select btn-sm" style="padding:4px 8px; font-size:0.8rem;" onchange="this.form.submit()">
+                                <option value="Pending" {% if task.status == 'Pending' %}selected{% endif %}>Pending</option>
+                                <option value="In Progress" {% if task.status == 'In Progress' %}selected{% endif %}>In Progress</option>
+                                <option value="Completed" {% if task.status == 'Completed' %}selected{% endif %}>Completed</option>
+                            </select>
+                        </form>
+                    </td>
+                    {% if current_user.role in ['SUPER_ADMIN', 'ADMIN'] %}
+                    <td style="text-align: right;">
+                        <div style="display:inline-flex; gap:6px;">
+                            <a href="{{ url_for('task_edit', task_id=task.id) }}" class="btn btn-secondary btn-sm">Edit</a>
+                            <form action="{{ url_for('task_delete', task_id=task.id) }}" method="POST" data-confirm="Are you sure you want to delete task '{{ task.title }}'?">
+                                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted); padding:10px;">No tasks found matching your criteria.</p>
+    {% endif %}
+</div>
+{% endblock %}

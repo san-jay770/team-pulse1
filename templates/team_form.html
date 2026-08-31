@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}{% if team %}Edit Team{% else %}Add Team{% endif %} - Team Pulse{% endblock %}
+{% block header_title %}{% if team %}Edit Team{% else %}Create New Team{% endif %}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>{% if team %}Edit Team: {{ team.name }}{% else %}Create New Team{% endif %}</h1>
+        <p>{% if team %}Update team details and description.{% else %}Define a new functional department or project team.{% endif %}</p>
+    </div>
+    <div class="page-header-actions">
+        <a href="{{ url_for('teams_list') }}" class="btn btn-secondary">&larr; Back to Teams</a>
+    </div>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    <form action="{% if team %}{{ url_for('team_edit', team_id=team.id) }}{% else %}{{ url_for('team_add') }}{% endif %}" method="POST">
+        <div class="form-group">
+            <label for="name" class="form-label">Team Name *</label>
+            <input 
+                type="text" 
+                id="name" 
+                name="name" 
+                class="form-control" 
+                value="{{ team.name if team else '' }}" 
+                placeholder="e.g. Frontend Engineering" 
+                required 
+                autofocus
+            >
+        </div>
+
+        <div class="form-group">
+            <label for="description" class="form-label">Description</label>
+            <textarea 
+                id="description" 
+                name="description" 
+                class="form-textarea" 
+                placeholder="Brief summary of team responsibilities..."
+            >{{ team.description if team and team.description else '' }}</textarea>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:12px; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border-color);">
+            <a href="{{ url_for('teams_list') }}" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">
+                {% if team %}Update Team{% else %}Create Team{% endif %}
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}

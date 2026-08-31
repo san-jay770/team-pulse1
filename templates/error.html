@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error {{ code }} - Team Pulse</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background-color: var(--bg-main);">
+
+<div class="card" style="max-width: 480px; width: 90%; padding: 40px; text-align: center; box-shadow: var(--shadow-lg);">
+    <div class="auth-logo" style="justify-content: center; margin-bottom: 20px;">
+        <div class="brand-icon" style="width: 44px; height: 44px; font-size: 1.2rem;">TP</div>
+        <span class="auth-title">TEAM PULSE</span>
+    </div>
+
+    <div style="font-size: 4rem; font-weight: 900; line-height: 1; color: var(--danger); margin-bottom: 12px;">
+        {{ code if code else '500' }}
+    </div>
+
+    <h2 style="font-size: 1.4rem; font-weight: 800; color: var(--text-main); margin-bottom: 8px;">
+        {% if code == 404 %}
+            Page Not Found
+        {% elif code == 403 %}
+            Access Forbidden
+        {% elif code == 400 %}
+            Bad Request
+        {% else %}
+            Internal Server Error
+        {% endif %}
+    </h2>
+
+    <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 28px;">
+        {{ message if message else 'An unexpected error occurred while processing your request.' }}
+    </p>
+
+    <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+        <a href="{{ url_for('dashboard') }}" class="btn btn-primary">Back to Dashboard</a>
+        <a href="{{ url_for('login') }}" class="btn btn-secondary">Go to Login</a>
+    </div>
+</div>
+
+</body>
+</html>

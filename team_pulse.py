@@ -1,3173 +1,2715 @@
-# ============================================================
-# TEAM PULSE
-# Complete Team Task Management App
-# Flask + SQLite Database
-# ============================================================
+"""TEAM PULSE - Team Task Management & Performance Monitoring System
+Flask + SQLite single-file application
 
-from flask import Flask, request, redirect, session, render_template_string, send_from_directory, jsonify, Response
-from werkzeug.security import generate_password_hash, check_password_hash
-from werkzeug.utils import secure_filename
-from functools import wraps
+Run:
+    python team_pulse.py
+
+Main fix:
+- Login success now reliably redirects to the role dashboard.
+- Session is refreshed from the database on every protected request.
+- Missing/invalid team records are handled safely.
+- Dashboard routes are kept role-based.
+- Better error logging is enabled so dashboard errors are visible in the terminal.
+"""
+
 import sqlite3
+import csv
+import io
 import os
-from datetime import datetime, date, timedelta
+import traceback
+from datetime import datetime
+from functools import wraps
+
+from flask import (
+    Flask, request, session, redirect, url_for, render_template,
+    flash, g, Response
+)
+from werkzeug.security import generate_password_hash, check_password_hash
+
+
+# ---------------------------------------------------------------------------
+# APP CONFIG
+# ---------------------------------------------------------------------------
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "team_pulse.db")
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
-app.permanent_session_lifetime = timedelta(days=3650)
+app.secret_key = os.environ.get(
+    "SECRET_KEY",
+    "teampulse-dev-secret-change-in-production"
+)
 
-# DATABASE_PATH / UPLOAD_FOLDER can be pointed at a mounted persistent
-# disk (Render Disk / Railway Volume) via environment variables.
-# Without this, Render/Railway's default filesystem is EPHEMERAL —
-# it resets on every redeploy or restart, wiping the SQLite file and
-# uploaded files back to the seeded demo data. See the README note
-# in DEPLOY_NOTES below for how to set this up.
-DATABASE = os.environ.get("DATABASE_PATH", "team_pulse.db")
-UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "uploads")
-
-_db_dir = os.path.dirname(DATABASE)
-if _db_dir:
-    os.makedirs(_db_dir, exist_ok=True)
-
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# Do not let Flask silently hide the real dashboard error during development.
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 
-# ============================================================
+# ---------------------------------------------------------------------------
+# DEFAULT DATA
+# ---------------------------------------------------------------------------
+
+TEAMS_DEFAULT = [
+    (1, "Development Team"),
+    (2, "Testing Team"),
+    (3, "AI & ML Team"),
+    (4, "Backend Team"),
+    (5, "Frontend Team"),
+    (6, "Data Science Team"),
+    (7, "Cloud & DevOps Team"),
+    (8, "UI/UX Team"),
+    (9, "Research Team"),
+    (10, "Support Team"),
+]
+
+ADMINS_DEFAULT = [
+    {
+        "team": 1, "name": "Parthasharathy",
+        "email": "parthasharathy87@gmail.com",
+        "password": "partha2006", "super_admin": True
+    },
+    {
+        "team": 2, "name": "Sanjay",
+        "email": "sanjaysanjayt19@gmail.com",
+        "password": "Siva1908", "super_admin": True
+    },
+    {
+        "team": 3, "name": "Premkumar",
+        "email": "premkumarm.aids@scteng.co.in",
+        "password": "premkumar15", "super_admin": True
+    },
+    {
+        "team": 4, "name": "Sowndar",
+        "email": "sowndar706@gmail.com",
+        "password": "kira@20", "super_admin": False
+    },
+    {
+        "team": 5, "name": "Ajaysaagar",
+        "email": "ajaysaagar.dev@gmail.com",
+        "password": "AjaysaagarME", "super_admin": False
+    },
+    {
+        "team": 6, "name": "Harshar",
+        "email": "harsharamutha@gmail.com",
+        "password": "sunisblue", "super_admin": False
+    },
+    {
+        "team": 7, "name": "Balaji",
+        "email": "balajiv.works@gmail.com",
+        "password": "Balaji2006", "super_admin": False
+    },
+    {
+        "team": 8, "name": "Kavihaiarasu",
+        "email": "kavihaiarasusampath@gmail.com",
+        "password": "Kavi@2004", "super_admin": False
+    },
+    {
+        "team": 9, "name": "Sam",
+        "email": "sam.seba1905@gmail.com",
+        "password": "123456@sam", "super_admin": False
+    },
+    {
+        "team": 10, "name": "Team 10 Admin",
+        "email": "admin07@teampulse.com",
+        "password": "TeamPulse@123", "super_admin": False
+    },
+]
+
+POINTS_PER_TASK = 10
+
+
+# ---------------------------------------------------------------------------
 # DATABASE
-# ============================================================
+# ---------------------------------------------------------------------------
 
-def db():
-    conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def get_db():
+    if "db" not in g:
+        g.db = sqlite3.connect(DB_PATH)
+        g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA foreign_keys = ON")
+    return g.db
+
+
+@app.teardown_appcontext
+def close_db(exception=None):
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
 
 
 def init_db():
+    """Create all tables and seed default teams/admins once."""
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA foreign_keys = ON")
+    cur = db.cursor()
 
-    conn = db()
-
-    conn.executescript("""
+    cur.executescript("""
+    CREATE TABLE IF NOT EXISTS teams (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        admin_id INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
 
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        active INTEGER DEFAULT 1,
-        created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS roles (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        role TEXT NOT NULL,
-        UNIQUE(user_id, role),
-        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS teams (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL,
         email TEXT NOT NULL,
-        created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS team_members (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        team_id INTEGER NOT NULL,
-        user_id INTEGER NOT NULL,
-        UNIQUE(team_id, user_id),
-        FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE,
-        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        password TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('SUPER_ADMIN','ADMIN','TEAM_MEMBER')),
+        team_id INTEGER,
+        points INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'Active',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(team_id) REFERENCES teams(id),
+        UNIQUE(email, team_id)
     );
 
     CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
-        description TEXT NOT NULL,
-        team_id INTEGER,
+        description TEXT,
+        team_id INTEGER NOT NULL,
         assigned_to INTEGER,
-        priority TEXT DEFAULT 'MEDIUM',
-        status TEXT DEFAULT 'NEW',
-        result TEXT,
-        created_at TEXT NOT NULL,
+        created_by INTEGER,
+        priority TEXT DEFAULT 'Medium',
+        status TEXT DEFAULT 'Pending',
+        due_date TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         completed_at TEXT,
+        points_awarded INTEGER DEFAULT 0,
         FOREIGN KEY(team_id) REFERENCES teams(id),
-        FOREIGN KEY(assigned_to) REFERENCES users(id)
+        FOREIGN KEY(assigned_to) REFERENCES users(id),
+        FOREIGN KEY(created_by) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS doubts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
-        title TEXT NOT NULL,
+        team_id INTEGER NOT NULL,
         question TEXT NOT NULL,
-        response TEXT,
-        status TEXT DEFAULT 'OPEN',
-        created_at TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES users(id)
+        answer TEXT,
+        status TEXT DEFAULT 'Open',
+        answered_by INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        answered_at TEXT,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(team_id) REFERENCES teams(id)
     );
 
     CREATE TABLE IF NOT EXISTS suggestions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        description TEXT NOT NULL,
+        team_id INTEGER NOT NULL,
+        suggestion TEXT NOT NULL,
+        status TEXT DEFAULT 'New',
         response TEXT,
-        status TEXT DEFAULT 'SUBMITTED',
-        created_at TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES users(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS hit_points (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        description TEXT NOT NULL,
-        importance TEXT DEFAULT 'MEDIUM',
-        created_at TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES users(id)
+        reviewed_by INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(team_id) REFERENCES teams(id)
     );
 
     CREATE TABLE IF NOT EXISTS activities (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
-        message TEXT NOT NULL,
-        icon TEXT DEFAULT '🔵',
-        created_at TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES users(id)
+        activity TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-
     """)
 
-    # ------------------------------------------------------
-    # MIGRATIONS - add new columns if upgrading an old DB
-    # ------------------------------------------------------
-
-    existing_cols = [
-        r["name"]
-        for r in conn.execute("PRAGMA table_info(tasks)").fetchall()
-    ]
-
-    if "due_date" not in existing_cols:
-        conn.execute("ALTER TABLE tasks ADD COLUMN due_date TEXT")
-
-    if "attachment" not in existing_cols:
-        conn.execute("ALTER TABLE tasks ADD COLUMN attachment TEXT")
-
-    conn.commit()
-    conn.close()
-
-
-def time_now():
-    return datetime.now().strftime("%d %b %Y, %I:%M %p")
-
-
-def add_activity(message, icon="🔵", user_id=None):
-
-    conn = db()
-
-    conn.execute("""
-        INSERT INTO activities
-        (user_id, message, icon, created_at)
-        VALUES (?, ?, ?, ?)
-    """, (user_id, message, icon, time_now()))
-
-    conn.commit()
-    conn.close()
-
-
-# ============================================================
-# USER / ROLE FUNCTIONS
-# ============================================================
-
-def create_user(name, email, password, role):
-
-    conn = db()
-
-    email = email.lower()
-
-    user = conn.execute(
-        "SELECT id FROM users WHERE email=?",
-        (email,)
-    ).fetchone()
-
-    if user:
-        user_id = user["id"]
-    else:
-        cur = conn.execute("""
-            INSERT INTO users
-            (name, email, password_hash, created_at)
-            VALUES (?, ?, ?, ?)
-        """, (
-            name,
-            email,
-            generate_password_hash(password),
-            time_now()
-        ))
-
-        user_id = cur.lastrowid
-
-    conn.execute("""
-        INSERT OR IGNORE INTO roles
-        (user_id, role)
-        VALUES (?, ?)
-    """, (user_id, role))
-
-    conn.commit()
-    conn.close()
-
-    return user_id
-
-
-def create_team(name, email):
-
-    conn = db()
-
-    conn.execute("""
-        INSERT OR IGNORE INTO teams
-        (name, email, created_at)
-        VALUES (?, ?, ?)
-    """, (name, email, time_now()))
-
-    conn.commit()
-    conn.close()
-
-
-def add_member_to_team(user_id, team_name):
-
-    conn = db()
-
-    team = conn.execute(
-        "SELECT id FROM teams WHERE name=?",
-        (team_name,)
-    ).fetchone()
-
-    if team:
-
-        conn.execute("""
-            INSERT OR IGNORE INTO team_members
-            (team_id, user_id)
-            VALUES (?, ?)
-        """, (team["id"], user_id))
-
-    conn.commit()
-    conn.close()
-
-
-def seed_data():
-
-    conn = db()
-
-    existing = conn.execute(
-        "SELECT COUNT(*) AS count FROM users"
-    ).fetchone()["count"]
-
-    conn.close()
-
-    if existing > 0:
-        return
-
-    _insert_default_data()
-
-
-def wipe_all_data():
-
-    conn = db()
-
-    # Delete in dependency order so foreign keys don't block it
-    conn.execute("DELETE FROM activities")
-    conn.execute("DELETE FROM hit_points")
-    conn.execute("DELETE FROM suggestions")
-    conn.execute("DELETE FROM doubts")
-    conn.execute("DELETE FROM tasks")
-    conn.execute("DELETE FROM team_members")
-    conn.execute("DELETE FROM roles")
-    conn.execute("DELETE FROM teams")
-    conn.execute("DELETE FROM users")
-
-    conn.commit()
-    conn.close()
-
-
-def refresh_backup_data():
-    """Wipe every table and reload the original demo/backup data."""
-
-    wipe_all_data()
-    _insert_default_data()
-
-
-def _insert_default_data():
-
-    # --------------------------------------------------------
-    # TEAMS
-    # --------------------------------------------------------
-
-    create_team("Alpha", "alpha@gmail.com")
-    create_team("Beta", "beta@gmail.com")
-    create_team("Gamma", "gamma@gmail.com")
-
-    # --------------------------------------------------------
-    # SUPER ADMINS
-    # --------------------------------------------------------
-
-    create_user(
-        "Prem Kumar",
-        "premkumarsir@gmail.com",
-        "Premkumar123",
-        "SUPER_ADMIN"
-    )
-
-    create_user(
-        "Sanjay",
-        "sanjayt@gmail.com",
-        "Siva1908",
-        "SUPER_ADMIN"
-    )
-
-    create_user(
-        "Parthasharathy",
-        "parthasharathy87@gmail.com",
-        "partha2006",
-        "SUPER_ADMIN"
-    )
-
-    # --------------------------------------------------------
-    # ADMINS
-    # --------------------------------------------------------
-
-    sanjay = create_user(
-        "Sanjay",
-        "sanjayt@gmail.com",
-        "Siva1908",
-        "ADMIN"
-    )
-
-    partha = create_user(
-        "Parthasharathy",
-        "parthasharathy87@gmail.com",
-        "partha2006",
-        "ADMIN"
-    )
-
-    prem = create_user(
-        "Prem Kumar",
-        "premkumarsir@gmail.com",
-        "Premkumar123",
-        "ADMIN"
-    )
-
-    # Store admin team memberships
-    add_member_to_team(sanjay, "Alpha")
-    add_member_to_team(partha, "Beta")
-    add_member_to_team(prem, "Gamma")
-
-    # --------------------------------------------------------
-    # MEMBERS
-    # --------------------------------------------------------
-
-    alpha1 = create_user(
-        "Alpha Member 1",
-        "alpha1@gmail.com",
-        "alpha123",
-        "TEAM_MEMBER"
-    )
-
-    alpha2 = create_user(
-        "Alpha Member 2",
-        "alpha2@gmail.com",
-        "alpha123",
-        "TEAM_MEMBER"
-    )
-
-    beta1 = create_user(
-        "Beta Member 1",
-        "beta1@gmail.com",
-        "beta123",
-        "TEAM_MEMBER"
-    )
-
-    beta2 = create_user(
-        "Beta Member 2",
-        "beta2@gmail.com",
-        "beta123",
-        "TEAM_MEMBER"
-    )
-
-    gamma1 = create_user(
-        "Gamma Member 1",
-        "gamma1@gmail.com",
-        "gamma123",
-        "TEAM_MEMBER"
-    )
-
-    gamma2 = create_user(
-        "Gamma Member 2",
-        "gamma2@gmail.com",
-        "gamma123",
-        "TEAM_MEMBER"
-    )
-
-    add_member_to_team(alpha1, "Alpha")
-    add_member_to_team(alpha2, "Alpha")
-
-    add_member_to_team(beta1, "Beta")
-    add_member_to_team(beta2, "Beta")
-
-    add_member_to_team(gamma1, "Gamma")
-    add_member_to_team(gamma2, "Gamma")
-
-    add_activity(
-        "Team Pulse database initialized",
-        "🚀"
-    )
-
-    add_activity(
-        "Alpha, Beta and Gamma teams created",
-        "🏢"
-    )
-
-    add_activity(
-        "6 team members registered",
-        "👥"
-    )
-
-
-# ============================================================
+    # Migrate users table schema if old UNIQUE(email) exists
+    try:
+        cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'")
+        row = cur.fetchone()
+        if row:
+            raw_sql = row["sql"] or ""
+            # Check if UNIQUE(email, team_id) is missing
+            if "UNIQUE(email, team_id)" not in raw_sql.replace(" ", "").replace("\n", "").replace("\r", ""):
+                cur.execute("PRAGMA foreign_keys = OFF")
+                cur.executescript("""
+                CREATE TABLE IF NOT EXISTS users_migrated (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL,
+                    password TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('SUPER_ADMIN','ADMIN','TEAM_MEMBER')),
+                    team_id INTEGER,
+                    points INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'Active',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(team_id) REFERENCES teams(id),
+                    UNIQUE(email, team_id)
+                );
+                INSERT INTO users_migrated (id, name, email, password, role, team_id, points, status, created_at)
+                SELECT id, name, email, password, role, team_id, points, status, created_at FROM users;
+                DROP TABLE users;
+                ALTER TABLE users_migrated RENAME TO users;
+                """)
+                cur.execute("PRAGMA foreign_keys = ON")
+                db.commit()
+    except Exception as e:
+        print("Users table migration note:", e)
+
+    # Seed teams.
+    for team_id, name in TEAMS_DEFAULT:
+        cur.execute("SELECT id FROM teams WHERE id = ?", (team_id,))
+        if cur.fetchone() is None:
+            cur.execute(
+                "INSERT INTO teams (id, name) VALUES (?, ?)",
+                (team_id, name)
+            )
+
+    db.commit()
+
+    # Seed users with compatible hashing algorithm
+    for admin in ADMINS_DEFAULT:
+        email = admin["email"].strip().lower()
+        cur.execute(
+            "SELECT id, role, team_id FROM users WHERE lower(email) = ? AND team_id = ?",
+            (email, admin["team"])
+        )
+        existing = cur.fetchone()
+
+        role = "SUPER_ADMIN" if admin["super_admin"] else "ADMIN"
+        hashed = generate_password_hash(admin["password"], method="pbkdf2:sha256")
+
+        if existing is None:
+            cur.execute("""
+                INSERT INTO users
+                (name, email, password, role, team_id, points, status)
+                VALUES (?, ?, ?, ?, ?, 0, 'Active')
+            """, (
+                admin["name"],
+                email,
+                hashed,
+                role,
+                admin["team"]
+            ))
+            user_id = cur.lastrowid
+
+            cur.execute(
+                "UPDATE teams SET admin_id = ? WHERE id = ?",
+                (user_id, admin["team"])
+            )
+        else:
+            # Update hash to pbkdf2:sha256 for existing seeded accounts
+            cur.execute("UPDATE users SET password = ? WHERE id = ?", (hashed, existing["id"]))
+
+    db.commit()
+    db.close()
+
+
+# ---------------------------------------------------------------------------
+# ACTIVITY
+# ---------------------------------------------------------------------------
+
+def log_activity(user_id, activity):
+    try:
+        db = get_db()
+        db.execute(
+            "INSERT INTO activities (user_id, activity) VALUES (?, ?)",
+            (user_id, activity)
+        )
+        db.commit()
+    except Exception:
+        # Logging must never break the actual application.
+        app.logger.exception("Activity logging failed")
+
+
+# ---------------------------------------------------------------------------
 # AUTH
-# ============================================================
+# ---------------------------------------------------------------------------
 
 def current_user():
+    user_id = session.get("user_id")
 
-    email = session.get("email")
-
-    if not email:
+    if not user_id:
         return None
 
-    conn = db()
-
-    user = conn.execute(
-        "SELECT * FROM users WHERE email=?",
-        (email,)
+    db = get_db()
+    return db.execute(
+        "SELECT * FROM users WHERE id = ?",
+        (user_id,)
     ).fetchone()
 
-    conn.close()
 
-    return user
-
-
-def current_role():
-    return session.get("role")
-
-
-def get_user_roles(user_id):
-
-    conn = db()
-
-    rows = conn.execute("""
-        SELECT role
-        FROM roles
-        WHERE user_id=?
-    """, (user_id,)).fetchall()
-
-    conn.close()
-
-    return [r["role"] for r in rows]
+@app.context_processor
+def inject_user():
+    user = current_user()
+    user_teams = []
+    if user and "email" in user.keys() and user["email"]:
+        db = get_db()
+        user_teams = db.execute("""
+            SELECT u.id AS user_id, u.role, u.team_id, t.name AS team_name
+            FROM users u
+            JOIN teams t ON u.team_id=t.id
+            WHERE lower(u.email) = lower(?) AND u.status = 'Active'
+            ORDER BY t.name
+        """, (user["email"],)).fetchall()
+    return {
+        "current_user": user,
+        "user_teams": user_teams
+    }
 
 
-def get_team_for_user(user_id):
+@app.route("/switch-team/<int:team_id>")
+def switch_team(team_id):
+    user = current_user()
+    if not user:
+        session.clear()
+        flash("Please log in to continue.", "warning")
+        return redirect(url_for("login"))
 
-    conn = db()
+    db = get_db()
+    target_user = db.execute("""
+        SELECT u.*, t.name AS team_name
+        FROM users u
+        LEFT JOIN teams t ON u.team_id=t.id
+        WHERE lower(u.email) = lower(?) AND u.team_id = ? AND u.status = 'Active'
+    """, (user["email"], team_id)).fetchone()
 
-    team = conn.execute("""
-        SELECT t.name
-        FROM teams t
-        JOIN team_members tm
-        ON t.id = tm.team_id
-        WHERE tm.user_id=?
-        LIMIT 1
-    """, (user_id,)).fetchone()
+    if not target_user:
+        flash("You are not an active member of this team.", "danger")
+        return redirect(url_for("dashboard"))
 
-    conn.close()
+    session["user_id"] = target_user["id"]
+    session["name"] = target_user["name"]
+    session["role"] = target_user["role"]
+    session["team_id"] = target_user["team_id"]
 
-    return team["name"] if team else None
+    log_activity(
+        target_user["id"],
+        f"{target_user['name']} switched workspace to {target_user['team_name'] or 'Team ' + str(team_id)}"
+    )
+
+    flash(f"Switched workspace to {target_user['team_name'] or 'Team ' + str(team_id)}.", "success")
+    return redirect(url_for("dashboard"))
 
 
-def login_required(fn):
-
-    @wraps(fn)
+def login_required(f):
+    @wraps(f)
     def wrapper(*args, **kwargs):
+        user = current_user()
 
-        if not current_user():
-            return redirect("/login")
+        if user is None:
+            session.clear()
+            flash("Please log in to continue.", "warning")
+            return redirect(url_for("login"))
 
-        return fn(*args, **kwargs)
+        # Refresh role/team from DB so stale session data cannot break routing.
+        session["user_id"] = user["id"]
+        session["name"] = user["name"]
+        session["role"] = user["role"]
+        session["team_id"] = user["team_id"]
+
+        if user["status"] != "Active":
+            session.clear()
+            flash("This account is inactive. Contact your admin.", "danger")
+            return redirect(url_for("login"))
+
+        return f(*args, **kwargs)
 
     return wrapper
 
 
-def role_required(*allowed):
-
-    def decorator(fn):
-
-        @wraps(fn)
+def role_required(*roles):
+    def decorator(f):
+        @wraps(f)
         def wrapper(*args, **kwargs):
+            user = current_user()
 
-            if not current_user():
-                return redirect("/login")
+            if user is None:
+                session.clear()
+                flash("Please log in to continue.", "warning")
+                return redirect(url_for("login"))
 
-            if current_role() not in allowed:
-                return "Access denied", 403
+            session["user_id"] = user["id"]
+            session["name"] = user["name"]
+            session["role"] = user["role"]
+            session["team_id"] = user["team_id"]
 
-            return fn(*args, **kwargs)
+            if user["status"] != "Active":
+                session.clear()
+                flash("This account is inactive. Contact your admin.", "danger")
+                return redirect(url_for("login"))
+
+            if user["role"] not in roles:
+                flash(
+                    "You do not have permission to perform this action.",
+                    "danger"
+                )
+                return redirect(url_for("dashboard"))
+
+            return f(*args, **kwargs)
 
         return wrapper
-
     return decorator
 
 
-# ============================================================
-# UI
-# ============================================================
+def team_scope_filter():
+    if session.get("role") == "SUPER_ADMIN":
+        return "u.team_id IS NOT NULL OR u.team_id IS NULL", []
 
-CSS = """
+    return "u.team_id = ?", [session.get("team_id")]
 
-* {
-    box-sizing:border-box;
-}
 
-body {
-    margin:0;
-    font-family:Arial,sans-serif;
-    background:#f1f5f9;
-    color:#172033;
-    -webkit-tap-highlight-color:transparent;
-}
+# ---------------------------------------------------------------------------
+# AUTH ROUTES
+# ---------------------------------------------------------------------------
 
-.sidebar {
-    position:fixed;
-    left:0;
-    top:0;
-    bottom:0;
-    width:245px;
-    padding:25px 15px;
-    padding-top:calc(25px + env(safe-area-inset-top));
-    padding-bottom:calc(25px + env(safe-area-inset-bottom));
-    color:white;
-    background:linear-gradient(
-        180deg,
-        #0f3b82,
-        #071b3b
-    );
-    z-index:100;
-    transition:transform 0.25s ease;
-    overflow-y:auto;
-}
+@app.route("/")
+def index():
+    if current_user():
+        return redirect(url_for("dashboard"))
 
-.hamburger {
-    display:none;
-    background:none;
-    border:0;
-    font-size:24px;
-    cursor:pointer;
-    color:#172033;
-    padding:4px 8px;
-}
+    return redirect(url_for("login"))
 
-.overlay {
-    display:none;
-    position:fixed;
-    inset:0;
-    background:#00000060;
-    z-index:99;
-}
 
-.overlay.show {
-    display:block;
-}
-
-.logo {
-    display:flex;
-    align-items:center;
-    gap:10px;
-    font-size:22px;
-    font-weight:900;
-    letter-spacing:0.3px;
-    margin:10px 15px 30px;
-}
-
-.logo-icon {
-    width:24px;
-    height:24px;
-    flex-shrink:0;
-    color:#38bdf8;
-}
-
-.logo span {
-    color:#38bdf8;
-}
-
-.nav {
-    display:flex;
-    align-items:center;
-    gap:13px;
-    color:#dbeafe;
-    text-decoration:none;
-    padding:12px 15px;
-    border-radius:12px;
-    margin:6px 0;
-    font-size:14.5px;
-    font-weight:500;
-    transition:background 0.15s ease, color 0.15s ease;
-}
-
-.nav:hover {
-    background:#ffffff20;
-    color:#ffffff;
-}
-
-.nav-icon {
-    width:19px;
-    height:19px;
-    flex-shrink:0;
-    opacity:0.9;
-}
-
-.main {
-    margin-left:245px;
-}
-
-.topbar {
-    height:70px;
-    background:white;
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    padding:0 30px;
-    padding-top:env(safe-area-inset-top);
-    border-bottom:1px solid #e2e8f0;
-}
-
-.content {
-    padding:30px;
-    padding-bottom:calc(30px + env(safe-area-inset-bottom));
-    max-width:1400px;
-    margin:auto;
-}
-
-h1 {
-    margin-bottom:8px;
-}
-
-.subtitle {
-    color:#64748b;
-    margin-bottom:25px;
-}
-
-.grid {
-    display:grid;
-    grid-template-columns:
-    repeat(auto-fit,minmax(190px,1fr));
-    gap:18px;
-}
-
-.card {
-    background:white;
-    padding:22px;
-    border-radius:18px;
-    margin-bottom:20px;
-    box-shadow:0 8px 25px #0f172a0d;
-}
-
-.stat-number {
-    font-size:32px;
-    font-weight:900;
-    margin-top:12px;
-}
-
-a.stat-card {
-    display:block;
-    text-decoration:none;
-    color:#172033;
-    cursor:pointer;
-    transition:transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-a.stat-card:hover {
-    transform:translateY(-4px);
-    box-shadow:0 14px 30px #0f172a1f;
-}
-
-.user-row {
-    display:flex;
-    flex-wrap:wrap;
-    align-items:center;
-    justify-content:space-between;
-    gap:14px;
-    padding:16px;
-    border-radius:16px;
-    background:#f8fafc;
-    margin-bottom:14px;
-}
-
-.user-info b {
-    font-size:16px;
-}
-
-.user-info .user-email {
-    color:#64748b;
-    font-size:13px;
-}
-
-.user-actions {
-    display:flex;
-    gap:10px;
-}
-
-.action-box {
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    justify-content:center;
-    width:88px;
-    padding:14px 8px;
-    border-radius:14px;
-    color:white;
-    text-decoration:none;
-    font-weight:bold;
-    font-size:12px;
-    text-align:center;
-    box-shadow:0 6px 16px #0f172a1a;
-    transition:transform 0.15s ease, box-shadow 0.15s ease;
-    cursor:pointer;
-}
-
-.action-box:hover {
-    transform:translateY(-3px);
-    box-shadow:0 10px 22px #0f172a26;
-}
-
-.action-box .action-icon {
-    font-size:22px;
-    margin-bottom:4px;
-}
-
-.action-box.password {
-    background:#2563eb;
-}
-
-.action-box.delete {
-    background:#ef4444;
-}
-
-.stat-label {
-    color:#64748b;
-}
-
-.quick {
-    display:grid;
-    grid-template-columns:
-    repeat(auto-fit,minmax(130px,1fr));
-    gap:15px;
-}
-
-.quick a {
-    text-decoration:none;
-    color:#172033;
-}
-
-.quick-card {
-    background:white;
-    padding:20px;
-    border-radius:16px;
-    text-align:center;
-    box-shadow:0 6px 20px #0f172a0d;
-}
-
-.quick-icon {
-    font-size:30px;
-    margin-bottom:8px;
-}
-
-.btn {
-    border:0;
-    background:#2563eb;
-    color:white;
-    padding:12px 18px;
-    border-radius:11px;
-    text-decoration:none;
-    cursor:pointer;
-    font-weight:bold;
-}
-
-.green {
-    background:#10b981;
-}
-
-.yellow {
-    background:#f59e0b;
-}
-
-.purple {
-    background:#8b5cf6;
-}
-
-input,
-textarea,
-select {
-    width:100%;
-    padding:13px;
-    margin:7px 0 16px;
-    border:1px solid #cbd5e1;
-    border-radius:11px;
-}
-
-textarea {
-    min-height:120px;
-}
-
-label {
-    font-weight:bold;
-}
-
-.badge {
-    display:inline-block;
-    padding:6px 10px;
-    border-radius:20px;
-    background:#dbeafe;
-    color:#1e40af;
-    font-size:12px;
-    font-weight:bold;
-}
-
-.progress {
-    height:10px;
-    background:#e2e8f0;
-    border-radius:20px;
-    overflow:hidden;
-}
-
-.progress-bar {
-    height:100%;
-    background:linear-gradient(
-        90deg,#2563eb,#06b6d4
-    );
-}
-
-.activity {
-    padding:14px 0;
-    border-bottom:1px solid #e2e8f0;
-}
-
-.login {
-    min-height:100vh;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    background:linear-gradient(
-        135deg,#071b3b,#0f3b82
-    );
-    padding:20px;
-}
-
-.login-card {
-    width:420px;
-    max-width:100%;
-    background:white;
-    padding:35px;
-    border-radius:25px;
-}
-
-.login-logo {
-    text-align:center;
-    font-size:32px;
-    font-weight:900;
-    color:#123c73;
-    margin-bottom:25px;
-}
-
-.pwd-wrap {
-    position:relative;
-}
-
-.pwd-wrap input {
-    padding-right:45px;
-}
-
-.pwd-toggle {
-    position:absolute;
-    right:14px;
-    top:22px;
-    cursor:pointer;
-    user-select:none;
-    color:#64748b;
-    display:flex;
-    align-items:center;
-}
-
-.pwd-toggle:hover {
-    color:#2563eb;
-}
-
-.pwd-toggle svg {
-    width:20px;
-    height:20px;
-}
-
-@media(max-width:800px) {
-
-    .sidebar {
-        transform:translateX(-100%);
-        width:80%;
-        max-width:280px;
-        box-shadow:4px 0 25px #00000040;
-    }
-
-    .sidebar.open {
-        transform:translateX(0);
-    }
-
-    .hamburger {
-        display:block;
-    }
-
-    .main {
-        margin-left:0;
-    }
-
-    .content {
-        padding:18px;
-    }
-
-    .topbar {
-        padding:0 15px;
-        padding-top:env(safe-area-inset-top);
-    }
-
-    .btn,
-    input,
-    textarea,
-    select {
-        font-size:16px;
-    }
-
-    .btn {
-        padding:14px 18px;
-    }
-}
-
-"""
-
-
-PWA_HEAD = """
-<meta name="viewport"
-content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0f3b82">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Team Pulse">
-<link rel="manifest" href="/manifest.json">
-<link rel="apple-touch-icon" href="/static/icon-192.png">
-<link rel="icon" href="/static/icon-192.png">
-"""
-
-
-def page(title, body):
-
-    user = current_user()
-
-    if not user:
-
-        return render_template_string("""
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <title>Team Pulse</title>
-        {{ pwa_head|safe }}
-        <style>{{ css }}</style>
-        </head>
-        <body>
-        {{ body|safe }}
-        </body>
-        </html>
-        """, css=CSS, body=body, pwa_head=PWA_HEAD)
-
-    return render_template_string("""
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <title>{{ title }} - Team Pulse</title>
-    {{ pwa_head|safe }}
-    <style>{{ css }}</style>
-    </head>
-
-    <body>
-
-    <div class="overlay" id="navOverlay" onclick="closeNav()"></div>
-
-    <aside class="sidebar" id="sidebar">
-
-        <div class="logo">
-            <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            TEAM <span>PULSE</span>
-        </div>
-
-        <a class="nav" href="/dashboard">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-            Dashboard
-        </a>
-
-        <a class="nav" href="/tasks">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/></svg>
-            Tasks
-        </a>
-
-        <a class="nav" href="/doubts">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-            Doubts
-        </a>
-
-        <a class="nav" href="/suggestions">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.3A7 7 0 0 0 12 2z"/></svg>
-            Suggestions
-        </a>
-
-        <a class="nav" href="/hit-points">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            Hit Points
-        </a>
-
-        {% if role in ["SUPER_ADMIN","ADMIN"] %}
-        <a class="nav" href="/add-task">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-            Add Task
-        </a>
-        {% endif %}
-
-        {% if role == "SUPER_ADMIN" %}
-        <a class="nav" href="/users">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            Users
-        </a>
-
-        <a class="nav" href="/add-team">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
-            Add Team
-        </a>
-        {% endif %}
-
-        <br>
-
-        <a class="nav" href="/logout">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-            Logout
-        </a>
-
-    </aside>
-
-    <main class="main">
-
-        <header class="topbar">
-
-            <span style="display:flex;align-items:center;gap:12px">
-
-                <button class="hamburger"
-                id="hamburgerBtn"
-                onclick="openNav()"
-                aria-label="Menu">
-                    ☰
-                </button>
-
-                <b>{{ role.replace("_"," ") }}</b>
-
-            </span>
-
-            <span>
-                👤 {{ user["name"] }}
-            </span>
-
-        </header>
-
-        <section class="content">
-
-            {{ body|safe }}
-
-        </section>
-
-    </main>
-
-    <script>
-    function openNav() {
-        document.getElementById('sidebar').classList.add('open');
-        document.getElementById('navOverlay').classList.add('show');
-    }
-    function closeNav() {
-        document.getElementById('sidebar').classList.remove('open');
-        document.getElementById('navOverlay').classList.remove('show');
-    }
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/service-worker.js').catch(function(){});
-    }
-    </script>
-
-    </body>
-    </html>
-    """,
-    css=CSS,
-    title=title,
-    body=body,
-    user=user,
-    role=current_role(),
-    pwa_head=PWA_HEAD)
-
-
-# ============================================================
-# PWA - MANIFEST & SERVICE WORKER
-# ============================================================
-
-@app.route("/manifest.json")
-def manifest():
-
-    return jsonify({
-        "name": "Team Pulse",
-        "short_name": "TeamPulse",
-        "start_url": "/dashboard",
-        "display": "standalone",
-        "background_color": "#071b3b",
-        "theme_color": "#0f3b82",
-        "orientation": "portrait-primary",
-        "icons": [
-            {
-                "src": "/static/icon-192.png",
-                "sizes": "192x192",
-                "type": "image/png",
-                "purpose": "any maskable"
-            },
-            {
-                "src": "/static/icon-512.png",
-                "sizes": "512x512",
-                "type": "image/png",
-                "purpose": "any maskable"
-            }
-        ]
-    })
-
-
-@app.route("/service-worker.js")
-def service_worker():
-
-    js = """
-    const CACHE_NAME = 'team-pulse-v1';
-
-    self.addEventListener('install', function(event) {
-        self.skipWaiting();
-    });
-
-    self.addEventListener('activate', function(event) {
-        self.clients.claim();
-    });
-
-    self.addEventListener('fetch', function(event) {
-        event.respondWith(
-            fetch(event.request).catch(function() {
-                return caches.match(event.request);
-            })
-        );
-    });
-    """
-
-    return Response(js, mimetype="application/javascript")
-
-
-# ============================================================
-# LOGIN
-# ============================================================
-
-@app.route("/", methods=["GET", "POST"])
 @app.route("/login", methods=["GET", "POST"])
 def login():
-
-    error = ""
-
-    info = (
-        "🔄 Backup data refreshed. Log back in with the default demo accounts."
-        if request.args.get("refreshed")
-        else ""
-    )
-
     if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        selected_team_id = request.form.get("team_id")
 
-        email = request.form["email"].lower().strip()
-        password = request.form["password"]
+        app.logger.info("LOGIN ATTEMPT: %s", email)
 
-        conn = db()
+        if not email or not password:
+            flash("Email and password are required.", "danger")
+            return render_template("login.html")
 
-        user = conn.execute(
-            "SELECT * FROM users WHERE email=?",
-            (email,)
-        ).fetchone()
+        db = get_db()
 
-        conn.close()
+        users = db.execute("""
+            SELECT u.*, t.name AS team_name
+            FROM users u
+            LEFT JOIN teams t ON u.team_id=t.id
+            WHERE lower(u.email) = ?
+        """, (email,)).fetchall()
 
-        if user and check_password_hash(
-            user["password_hash"],
-            password
-        ):
+        app.logger.info("USERS FOUND COUNT: %s", len(users))
 
-            session.permanent = True
-            session["email"] = email
+        if not users:
+            flash("Invalid email or password.", "danger")
+            return render_template("login.html")
 
-            roles = get_user_roles(user["id"])
+        valid_users = []
+        for user_candidate in users:
+            try:
+                if check_password_hash(user_candidate["password"], password):
+                    valid_users.append(user_candidate)
+            except Exception as exc:
+                app.logger.warning("Hash check error: %s", exc)
 
-            if "SUPER_ADMIN" in roles:
-                session["role"] = "SUPER_ADMIN"
+        if not valid_users:
+            flash("Invalid email or password.", "danger")
+            return render_template("login.html")
 
-            elif "ADMIN" in roles:
-                session["role"] = "ADMIN"
+        active_users = [u for u in valid_users if u["status"] == "Active"]
 
-            else:
-                session["role"] = "TEAM_MEMBER"
+        if not active_users:
+            flash("This account is inactive. Contact your admin.", "danger")
+            return render_template("login.html")
 
-            add_activity(
-                f"{user['name']} logged in",
-                "🔐",
-                user["id"]
+        # If user belongs to multiple teams and team has not been selected yet
+        if len(active_users) > 1 and not selected_team_id:
+            team_options = [
+                {
+                    "user_id": u["id"],
+                    "team_id": u["team_id"],
+                    "team_name": u["team_name"] or f"Team {u['team_id']}",
+                    "role": u["role"]
+                }
+                for u in active_users
+            ]
+            return render_template(
+                "login.html",
+                email=email,
+                password=password,
+                team_options=team_options
             )
 
-            return redirect("/dashboard")
+        if selected_team_id:
+            user = next(
+                (u for u in active_users if str(u["team_id"]) == str(selected_team_id)),
+                active_users[0]
+            )
+        else:
+            user = active_users[0]
 
-        error = "Invalid email or password."
+        # Clear old session before creating the new authenticated session.
+        session.clear()
 
-    body = f"""
+        session["user_id"] = user["id"]
+        session["name"] = user["name"]
+        session["role"] = user["role"]
+        session["team_id"] = user["team_id"]
 
-    <div class="login">
+        session.permanent = False
 
-    <div class="login-card">
+        log_activity(
+            user["id"],
+            f"{user['name']} logged in"
+        )
 
-        <div class="login-logo">
-            ⚡ TEAM <span>PULSE</span>
-        </div>
+        app.logger.info(
+            "LOGIN SUCCESS: id=%s name=%s role=%s team_id=%s",
+            user["id"],
+            user["name"],
+            user["role"],
+            user["team_id"]
+        )
 
-        <p style="text-align:center;color:#64748b">
-            Connect • Assign • Track • Achieve
-        </p>
+        flash(
+            f"Welcome, {user['name']}!",
+            "success"
+        )
 
-        <p style="color:red">
-            {error}
-        </p>
+        return redirect("/dashboard")
 
-        <p style="color:#10b981">
-            {info}
-        </p>
+    return render_template("login.html")
 
-        <form method="POST" action="/login">
-
-            <label>Email</label>
-
-            <input
-            type="email"
-            name="email"
-            placeholder="Enter email"
-            required>
-
-            <label>Password</label>
-
-            <div class="pwd-wrap">
-
-                <input
-                type="password"
-                id="pwd"
-                name="password"
-                placeholder="Enter password"
-                required>
-
-                <span class="pwd-toggle"
-                onclick="togglePwd()"
-                id="pwdIcon">
-
-                    <svg id="eyeOpen" xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                        <circle cx="12" cy="12" r="3"/>
-                    </svg>
-
-                    <svg id="eyeClosed" xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round"
-                    style="display:none">
-                        <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.6 18.6 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-                        <line x1="1" y1="1" x2="23" y2="23"/>
-                    </svg>
-
-                </span>
-
-            </div>
-
-            <button class="btn"
-            style="width:100%">
-                LOGIN →
-            </button>
-
-        </form>
-
-    </div>
-
-    </div>
-
-    <script>
-    function togglePwd() {{
-        const el = document.getElementById('pwd');
-        const eyeOpen = document.getElementById('eyeOpen');
-        const eyeClosed = document.getElementById('eyeClosed');
-        if (el.type === 'password') {{
-            el.type = 'text';
-            eyeOpen.style.display = 'none';
-            eyeClosed.style.display = 'block';
-        }} else {{
-            el.type = 'password';
-            eyeOpen.style.display = 'block';
-            eyeClosed.style.display = 'none';
-        }}
-    }}
-    </script>
-
-    """
-
-    return page("Login", body)
-
-
-# ============================================================
-# UPLOADED FILES
-# ============================================================
-
-@app.route("/uploads/<path:filename>")
-@login_required
-def uploaded_file(filename):
-
-    return send_from_directory(UPLOAD_FOLDER, filename)
-
-
-# ============================================================
-# LOGOUT
-# ============================================================
 
 @app.route("/logout")
 def logout():
+    if "user_id" in session:
+        log_activity(
+            session["user_id"],
+            f"{session.get('name')} logged out"
+        )
 
     session.clear()
+    flash("You have been logged out.", "info")
 
-    return redirect("/login")
+    return redirect(url_for("login"))
 
 
-# ============================================================
+# ---------------------------------------------------------------------------
 # DASHBOARD
-# ============================================================
+# ---------------------------------------------------------------------------
 
 @app.route("/dashboard")
 @login_required
 def dashboard():
+    db = get_db()
+    role = session.get("role")
 
-    user = current_user()
-    role = current_role()
+    app.logger.info(
+        "DASHBOARD REQUEST: user=%s role=%s team=%s",
+        session.get("user_id"),
+        role,
+        session.get("team_id")
+    )
 
-    conn = db()
+    try:
+        # ---------------------------------------------------------------
+        # SUPER ADMIN
+        # ---------------------------------------------------------------
+        if role == "SUPER_ADMIN":
+            stats = {
+                "total_teams": db.execute(
+                    "SELECT COUNT(*) c FROM teams"
+                ).fetchone()["c"],
 
-    users_count = conn.execute(
-        "SELECT COUNT(*) c FROM users"
-    ).fetchone()["c"]
+                "total_admins": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM users
+                    WHERE role IN ('SUPER_ADMIN','ADMIN')
+                """).fetchone()["c"],
 
-    teams_count = conn.execute(
-        "SELECT COUNT(*) c FROM teams"
-    ).fetchone()["c"]
+                "total_members": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM users
+                    WHERE role='TEAM_MEMBER'
+                """).fetchone()["c"],
 
-    tasks_count = conn.execute(
-        "SELECT COUNT(*) c FROM tasks"
-    ).fetchone()["c"]
+                "total_tasks": db.execute(
+                    "SELECT COUNT(*) c FROM tasks"
+                ).fetchone()["c"],
 
-    doubts_count = conn.execute(
-        "SELECT COUNT(*) c FROM doubts"
-    ).fetchone()["c"]
+                "pending_tasks": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM tasks
+                    WHERE status != 'Completed'
+                """).fetchone()["c"],
 
-    suggestions_count = conn.execute(
-        "SELECT COUNT(*) c FROM suggestions"
-    ).fetchone()["c"]
+                "completed_tasks": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM tasks
+                    WHERE status='Completed'
+                """).fetchone()["c"],
 
-    hits_count = conn.execute(
-        "SELECT COUNT(*) c FROM hit_points"
-    ).fetchone()["c"]
+                "total_doubts": db.execute(
+                    "SELECT COUNT(*) c FROM doubts"
+                ).fetchone()["c"],
 
-    completed = conn.execute(
-        "SELECT COUNT(*) c FROM tasks WHERE status='COMPLETED'"
-    ).fetchone()["c"]
+                "open_doubts": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM doubts
+                    WHERE status='Open'
+                """).fetchone()["c"],
 
-    activities = conn.execute("""
-        SELECT *
-        FROM activities
-        ORDER BY id DESC
-        LIMIT 8
+                "total_suggestions": db.execute(
+                    "SELECT COUNT(*) c FROM suggestions"
+                ).fetchone()["c"],
+            }
+
+            team_perf_rows = db.execute("""
+                SELECT
+                    t.id,
+                    t.name,
+                    COUNT(tk.id) AS total,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN tk.status='Completed' THEN 1
+                                ELSE 0
+                            END
+                        ), 0
+                    ) AS done
+                FROM teams t
+                LEFT JOIN tasks tk
+                    ON tk.team_id=t.id
+                GROUP BY t.id, t.name
+                ORDER BY t.id
+            """).fetchall()
+
+            team_perf = []
+
+            for row in team_perf_rows:
+                total = row["total"] or 0
+                done = row["done"] or 0
+
+                team_perf.append({
+                    "id": row["id"],
+                    "name": row["name"],
+                    "total": total,
+                    "done": done,
+                    "pct": round(done / total * 100) if total else 0,
+                })
+
+            return render_template(
+                "dashboard_super.html",
+                stats=stats,
+                team_perf=team_perf
+            )
+
+        # ---------------------------------------------------------------
+        # ADMIN
+        # ---------------------------------------------------------------
+        if role == "ADMIN":
+            team_id = session.get("team_id")
+
+            team = db.execute(
+                "SELECT * FROM teams WHERE id=?",
+                (team_id,)
+            ).fetchone()
+
+            # Prevent dashboard crash if the team was deleted.
+            if team is None:
+                flash(
+                    "Your team record was not found. Please contact the super admin.",
+                    "danger"
+                )
+                return render_template(
+                    "dashboard_admin.html",
+                    team=None,
+                    stats={
+                        "members": 0,
+                        "total_tasks": 0,
+                        "completed": 0,
+                        "pending": 0,
+                        "points": 0,
+                    }
+                )
+
+            stats = {
+                "members": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM users
+                    WHERE team_id=?
+                    AND role='TEAM_MEMBER'
+                """, (team_id,)).fetchone()["c"],
+
+                "total_tasks": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM tasks
+                    WHERE team_id=?
+                """, (team_id,)).fetchone()["c"],
+
+                "completed": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM tasks
+                    WHERE team_id=?
+                    AND status='Completed'
+                """, (team_id,)).fetchone()["c"],
+
+                "pending": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM tasks
+                    WHERE team_id=?
+                    AND status!='Completed'
+                """, (team_id,)).fetchone()["c"],
+
+                "points": db.execute("""
+                    SELECT COALESCE(SUM(points),0) c
+                    FROM users
+                    WHERE team_id=?
+                """, (team_id,)).fetchone()["c"],
+            }
+
+            return render_template(
+                "dashboard_admin.html",
+                team=team,
+                stats=stats
+            )
+
+        # ---------------------------------------------------------------
+        # TEAM MEMBER
+        # ---------------------------------------------------------------
+        if role == "TEAM_MEMBER":
+            uid = session.get("user_id")
+            team_id = session.get("team_id")
+
+            team = db.execute(
+                "SELECT * FROM teams WHERE id=?",
+                (team_id,)
+            ).fetchone()
+
+            stats = {
+                "pending": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM tasks
+                    WHERE assigned_to=?
+                    AND status='Pending'
+                """, (uid,)).fetchone()["c"],
+
+                "in_progress": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM tasks
+                    WHERE assigned_to=?
+                    AND status='In Progress'
+                """, (uid,)).fetchone()["c"],
+
+                "completed": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM tasks
+                    WHERE assigned_to=?
+                    AND status='Completed'
+                """, (uid,)).fetchone()["c"],
+
+                "overdue": db.execute("""
+                    SELECT COUNT(*) c
+                    FROM tasks
+                    WHERE assigned_to=?
+                    AND status!='Completed'
+                    AND due_date IS NOT NULL
+                    AND due_date < date('now')
+                """, (uid,)).fetchone()["c"],
+            }
+
+            point_row = db.execute(
+                "SELECT COALESCE(points,0) points FROM users WHERE id=?",
+                (uid,)
+            ).fetchone()
+
+            my_points = point_row["points"] if point_row else 0
+
+            recent = db.execute("""
+                SELECT *
+                FROM activities
+                WHERE user_id=?
+                ORDER BY created_at DESC
+                LIMIT 5
+            """, (uid,)).fetchall()
+
+            return render_template(
+                "dashboard_member.html",
+                team=team,
+                stats=stats,
+                my_points=my_points,
+                recent=recent
+            )
+
+        # Invalid role safety.
+        session.clear()
+        flash("Invalid user role. Please log in again.", "danger")
+        return redirect(url_for("login"))
+
+    except Exception as exc:
+        # IMPORTANT: print the real exception instead of hiding it.
+        app.logger.exception("DASHBOARD ERROR: %s", exc)
+
+        return (
+            f"""
+            <div style="
+                font-family:Arial;
+                padding:30px;
+                max-width:900px;
+                margin:auto;
+            ">
+                <h1>Team Pulse Dashboard Error</h1>
+                <p><b>User:</b> {session.get('name')}</p>
+                <p><b>Role:</b> {session.get('role')}</p>
+                <p><b>Team ID:</b> {session.get('team_id')}</p>
+                <hr>
+                <h3>Actual error:</h3>
+                <pre style="
+                    background:#f4f4f4;
+                    padding:15px;
+                    white-space:pre-wrap;
+                ">{exc}</pre>
+                <p>Check the terminal where <b>python team_pulse.py</b> is running.</p>
+                <a href="/logout">Logout</a>
+            </div>
+            """,
+            500
+        )
+
+
+# ---------------------------------------------------------------------------
+# USERS
+# ---------------------------------------------------------------------------
+
+@app.route("/users")
+@role_required("SUPER_ADMIN", "ADMIN")
+def users_list():
+    db = get_db()
+
+    q = request.args.get("q", "").strip()
+    team_filter = request.args.get("team", "")
+    role_filter = request.args.get("role", "")
+
+    if session["role"] == "SUPER_ADMIN":
+        sql = """
+            SELECT u.*, t.name AS team_name
+            FROM users u
+            LEFT JOIN teams t ON u.team_id=t.id
+            WHERE 1=1
+        """
+        params = []
+    else:
+        sql = """
+            SELECT u.*, t.name AS team_name
+            FROM users u
+            LEFT JOIN teams t ON u.team_id=t.id
+            WHERE u.team_id=?
+        """
+        params = [session["team_id"]]
+
+    if q:
+        sql += " AND (u.name LIKE ? OR u.email LIKE ?)"
+        params.extend([f"%{q}%", f"%{q}%"])
+
+    if team_filter and session["role"] == "SUPER_ADMIN":
+        sql += " AND u.team_id=?"
+        params.append(team_filter)
+
+    if role_filter:
+        sql += " AND u.role=?"
+        params.append(role_filter)
+
+    sql += " ORDER BY u.team_id, u.role, u.name"
+
+    users = db.execute(sql, params).fetchall()
+    teams = db.execute(
+        "SELECT * FROM teams ORDER BY id"
+    ).fetchall()
+
+    return render_template(
+        "users.html",
+        users=users,
+        teams=teams,
+        q=q,
+        team_filter=team_filter,
+        role_filter=role_filter
+    )
+
+
+@app.route("/api/user-by-email")
+@role_required("SUPER_ADMIN", "ADMIN")
+def api_user_by_email():
+    email = request.args.get("email", "").strip().lower()
+    if not email:
+        return {"found": False}
+    db = get_db()
+    user = db.execute("""
+        SELECT u.name, u.email, GROUP_CONCAT(t.name, ', ') AS current_teams
+        FROM users u
+        LEFT JOIN teams t ON u.team_id=t.id
+        WHERE lower(u.email)=?
+        GROUP BY lower(u.email)
+    """, (email,)).fetchone()
+
+    if user:
+        return {
+            "found": True,
+            "name": user["name"],
+            "email": user["email"],
+            "current_teams": user["current_teams"] or "None"
+        }
+    return {"found": False}
+
+
+@app.route("/users/add", methods=["GET", "POST"])
+@role_required("SUPER_ADMIN", "ADMIN")
+def user_add():
+    db = get_db()
+
+    if session["role"] == "SUPER_ADMIN":
+        teams = db.execute(
+            "SELECT * FROM teams ORDER BY id"
+        ).fetchall()
+    else:
+        teams = db.execute(
+            "SELECT * FROM teams WHERE id=?",
+            (session["team_id"],)
+        ).fetchall()
+
+    existing_users = db.execute("""
+        SELECT u.name, u.email, GROUP_CONCAT(t.name, ', ') AS current_teams
+        FROM users u
+        LEFT JOIN teams t ON u.team_id=t.id
+        GROUP BY lower(u.email)
+        ORDER BY u.name
     """).fetchall()
 
-    conn.close()
+    preset_team_id = request.args.get("team_id", "")
+    preset_email = request.args.get("email", "").strip().lower()
 
-    progress = (
-        int(completed / tasks_count * 100)
-        if tasks_count else 0
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        role = request.form.get("role", "TEAM_MEMBER")
+        team_id = request.form.get("team_id") or preset_team_id
+
+        if not email:
+            flash("Email address is required.", "danger")
+            return render_template(
+                "user_form.html",
+                teams=teams,
+                user=None,
+                existing_users=existing_users,
+                preset_team_id=preset_team_id,
+                preset_email=preset_email
+            )
+
+        if session["role"] == "ADMIN":
+            team_id = session["team_id"]
+            if role == "SUPER_ADMIN":
+                role = "TEAM_MEMBER"
+
+        if not team_id:
+            flash("Assigned team is required.", "danger")
+            return render_template(
+                "user_form.html",
+                teams=teams,
+                user=None,
+                existing_users=existing_users,
+                preset_team_id=preset_team_id,
+                preset_email=preset_email
+            )
+
+        # Check if this email exists anywhere in the system
+        existing_global = db.execute(
+            "SELECT * FROM users WHERE lower(email)=? LIMIT 1",
+            (email,)
+        ).fetchone()
+
+        if existing_global:
+            # Re-use name if not provided
+            if not name:
+                name = existing_global["name"]
+            # Re-use existing password hash if not provided
+            if not password:
+                password_hash = existing_global["password"]
+            else:
+                password_hash = generate_password_hash(password, method="pbkdf2:sha256")
+                db.execute("UPDATE users SET password=? WHERE lower(email)=?", (password_hash, email))
+        else:
+            # Brand new account requires both name and password
+            if not name or not password:
+                flash("Full name and password are required when creating a brand new user account.", "danger")
+                return render_template(
+                    "user_form.html",
+                    teams=teams,
+                    user=None,
+                    existing_users=existing_users,
+                    preset_team_id=preset_team_id,
+                    preset_email=preset_email
+                )
+            password_hash = generate_password_hash(password, method="pbkdf2:sha256")
+
+        try:
+            existing_in_team = db.execute(
+                "SELECT id FROM users WHERE lower(email)=? AND team_id=?",
+                (email, int(team_id))
+            ).fetchone()
+
+            if existing_in_team:
+                flash(
+                    "A member with this email is already assigned to the selected team.",
+                    "danger"
+                )
+                return render_template(
+                    "user_form.html",
+                    teams=teams,
+                    user=None,
+                    existing_users=existing_users,
+                    preset_team_id=preset_team_id,
+                    preset_email=preset_email
+                )
+
+            db.execute("""
+                INSERT INTO users
+                (name,email,password,role,team_id,points,status)
+                VALUES (?,?,?,?,?,0,'Active')
+            """, (
+                name,
+                email,
+                password_hash,
+                role,
+                int(team_id)
+            ))
+
+            db.commit()
+
+            team_row = db.execute("SELECT name FROM teams WHERE id=?", (int(team_id),)).fetchone()
+            team_name = team_row["name"] if team_row else f"Team #{team_id}"
+
+            log_activity(
+                session["user_id"],
+                f"{session['name']} added user {name} ({email}) to {team_name}"
+            )
+
+            flash(f"User '{name}' ({email}) assigned to {team_name} successfully.", "success")
+            return redirect(url_for("users_list"))
+
+        except sqlite3.IntegrityError as exc:
+            db.rollback()
+            flash(f"Unable to assign user: {exc}", "danger")
+
+    return render_template(
+        "user_form.html",
+        teams=teams,
+        user=None,
+        existing_users=existing_users,
+        preset_team_id=preset_team_id,
+        preset_email=preset_email
     )
 
-    team = get_team_for_user(user["id"])
 
-    users_open = (
-        '<a class="card stat-card" href="/users">'
-        if role == "SUPER_ADMIN"
-        else '<div class="card">'
+@app.route("/users/edit/<int:user_id>", methods=["GET", "POST"])
+@role_required("SUPER_ADMIN", "ADMIN")
+def user_edit(user_id):
+    db = get_db()
+
+    user = db.execute(
+        "SELECT * FROM users WHERE id=?",
+        (user_id,)
+    ).fetchone()
+
+    if not user:
+        flash("User not found.", "danger")
+        return redirect(url_for("users_list"))
+
+    if (
+        session["role"] == "ADMIN"
+        and user["team_id"] != session["team_id"]
+    ):
+        flash("You do not have permission to perform this action.", "danger")
+        return redirect(url_for("users_list"))
+
+    teams = db.execute(
+        "SELECT * FROM teams ORDER BY id"
+    ).fetchall()
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        role = request.form.get("role", user["role"])
+        team_id = request.form.get("team_id", user["team_id"])
+        status = request.form.get("status", user["status"])
+        new_password = request.form.get("password", "")
+
+        if not name or not email:
+            flash("Name and email are required.", "danger")
+            return render_template(
+                "user_form.html",
+                teams=teams,
+                user=user
+            )
+
+        if session["role"] == "ADMIN":
+            team_id = session["team_id"]
+
+            if role == "SUPER_ADMIN":
+                role = "TEAM_MEMBER"
+
+        try:
+            existing = db.execute(
+                "SELECT id FROM users WHERE lower(email)=? AND team_id=? AND id!=?",
+                (email, int(team_id), user_id)
+            ).fetchone()
+
+            if existing:
+                flash(
+                    "A user with this email is already assigned to this team.",
+                    "danger"
+                )
+                return render_template(
+                    "user_form.html",
+                    teams=teams,
+                    user=user
+                )
+
+            if new_password:
+                hashed_pwd = generate_password_hash(new_password, method="pbkdf2:sha256")
+                db.execute("""
+                    UPDATE users
+                    SET name=?, email=?, role=?, team_id=?,
+                        status=?, password=?
+                    WHERE id=?
+                """, (
+                    name,
+                    email,
+                    role,
+                    int(team_id),
+                    status,
+                    hashed_pwd,
+                    user_id
+                ))
+                # Synchronize password for this email across all team accounts
+                db.execute("UPDATE users SET password=? WHERE lower(email)=?", (hashed_pwd, email))
+            else:
+                db.execute("""
+                    UPDATE users
+                    SET name=?, email=?, role=?, team_id=?, status=?
+                    WHERE id=?
+                """, (
+                    name,
+                    email,
+                    role,
+                    int(team_id),
+                    status,
+                    user_id
+                ))
+
+            db.commit()
+
+            log_activity(
+                session["user_id"],
+                f"{session['name']} updated user {name}"
+            )
+
+            flash("User updated successfully.", "success")
+            return redirect(url_for("users_list"))
+
+        except sqlite3.IntegrityError as exc:
+            db.rollback()
+            flash(f"Unable to update user: {exc}", "danger")
+
+    return render_template(
+        "user_form.html",
+        teams=teams,
+        user=user
     )
-    users_close = "</a>" if role == "SUPER_ADMIN" else "</div>"
 
-    teams_open = (
-        '<a class="card stat-card" href="/add-team">'
-        if role == "SUPER_ADMIN"
-        else '<div class="card">'
+
+@app.route("/users/delete/<int:user_id>", methods=["POST"])
+@role_required("SUPER_ADMIN", "ADMIN")
+def user_delete(user_id):
+    db = get_db()
+
+    user = db.execute(
+        "SELECT * FROM users WHERE id=?",
+        (user_id,)
+    ).fetchone()
+
+    if not user:
+        flash("User not found.", "danger")
+        return redirect(url_for("users_list"))
+
+    if (
+        session["role"] == "ADMIN"
+        and user["team_id"] != session["team_id"]
+    ):
+        flash("You do not have permission to perform this action.", "danger")
+        return redirect(url_for("users_list"))
+
+    if user_id == session["user_id"]:
+        flash("You cannot delete your own account.", "danger")
+        return redirect(url_for("users_list"))
+
+    try:
+        db.execute(
+            "DELETE FROM users WHERE id=?",
+            (user_id,)
+        )
+        db.commit()
+
+        log_activity(
+            session["user_id"],
+            f"{session['name']} deleted user {user['name']}"
+        )
+
+        flash("User deleted successfully.", "success")
+
+    except sqlite3.IntegrityError:
+        db.rollback()
+        flash(
+            "This user cannot be deleted because other records depend on the account.",
+            "danger"
+        )
+
+    return redirect(url_for("users_list"))
+
+
+# ---------------------------------------------------------------------------
+# TEAMS
+# ---------------------------------------------------------------------------
+
+@app.route("/teams")
+@role_required("SUPER_ADMIN")
+def teams_list():
+    db = get_db()
+
+    teams = db.execute("""
+        SELECT
+            t.*,
+            a.name AS admin_name,
+            (
+                SELECT COUNT(*)
+                FROM users u
+                WHERE u.team_id=t.id
+                AND u.role='TEAM_MEMBER'
+            ) AS member_count,
+            (
+                SELECT COUNT(*)
+                FROM tasks tk
+                WHERE tk.team_id=t.id
+            ) AS total_tasks,
+            (
+                SELECT COUNT(*)
+                FROM tasks tk
+                WHERE tk.team_id=t.id
+                AND tk.status='Completed'
+            ) AS completed_tasks
+        FROM teams t
+        LEFT JOIN users a ON t.admin_id=a.id
+        ORDER BY t.id
+    """).fetchall()
+
+    return render_template(
+        "teams.html",
+        teams=teams
     )
-    teams_close = "</a>" if role == "SUPER_ADMIN" else "</div>"
-
-    body = f"""
-
-    <h1>Good Morning, {user["name"]} 👋</h1>
-
-    <div class="subtitle">
-        Welcome to your Team Pulse workspace.
-    </div>
-
-    <div class="grid">
-
-        {users_open}
-            👥
-            <div class="stat-number">
-                {users_count}
-            </div>
-            <div class="stat-label">
-                Users
-            </div>
-        {users_close}
-
-        {teams_open}
-            🏢
-            <div class="stat-number">
-                {teams_count}
-            </div>
-            <div class="stat-label">
-                Teams
-            </div>
-        {teams_close}
-
-        <a class="card stat-card" href="/tasks">
-            📋
-            <div class="stat-number">
-                {tasks_count}
-            </div>
-            <div class="stat-label">
-                Tasks
-            </div>
-        </a>
-
-        <a class="card stat-card" href="/doubts">
-            💬
-            <div class="stat-number">
-                {doubts_count}
-            </div>
-            <div class="stat-label">
-                Doubts
-            </div>
-        </a>
-
-        <a class="card stat-card" href="/suggestions">
-            💡
-            <div class="stat-number">
-                {suggestions_count}
-            </div>
-            <div class="stat-label">
-                Suggestions
-            </div>
-        </a>
-
-        <a class="card stat-card" href="/hit-points">
-            ⭐
-            <div class="stat-number">
-                {hits_count}
-            </div>
-            <div class="stat-label">
-                Hit Points
-            </div>
-        </a>
-
-    </div>
-
-    <div class="card">
-
-        <h2>📊 Task Progress</h2>
-
-        <div class="progress">
-            <div
-            class="progress-bar"
-            style="width:{progress}%">
-            </div>
-        </div>
-
-        <br>
-
-        <b>{progress}%</b>
-        completed
-
-    </div>
-
-    <h2>⚡ Quick Actions</h2>
-
-    <div class="quick">
-
-        <a href="/tasks">
-            <div class="quick-card">
-                <div class="quick-icon">📋</div>
-                Tasks
-            </div>
-        </a>
-
-        <a href="/doubts">
-            <div class="quick-card">
-                <div class="quick-icon">💬</div>
-                Doubts
-            </div>
-        </a>
-
-        <a href="/suggestions">
-            <div class="quick-card">
-                <div class="quick-icon">💡</div>
-                Ideas
-            </div>
-        </a>
-
-        <a href="/hit-points">
-            <div class="quick-card">
-                <div class="quick-icon">⭐</div>
-                Hit Points
-            </div>
-        </a>
-
-    </div>
-
-    <br>
-
-    <div class="card">
-
-        <h2>🔥 Recent Activity</h2>
-
-    """
-
-    for a in activities:
-
-        body += f"""
-
-        <div class="activity">
-
-            {a["icon"]}
-            <b>{a["message"]}</b>
-
-            <small>
-                — {a["created_at"]}
-            </small>
-
-        </div>
-
-        """
-
-    body += "</div>"
-
-    # Multiple-role account
-    roles = get_user_roles(user["id"])
-
-    if len(roles) > 1:
-
-        body += """
-
-        <div class="card">
-
-        <h2>🔄 Switch Access</h2>
-
-        """
-
-        for r in roles:
-
-            body += f"""
-
-            <a class="btn"
-            href="/switch/{r}"
-            style="margin-right:8px">
-                {r.replace("_"," ")}
-            </a>
-
-            """
-
-        body += "</div>"
-
-    return page("Dashboard", body)
 
 
-# ============================================================
-# SWITCH ROLE
-# ============================================================
+@app.route("/teams/add", methods=["GET", "POST"])
+@role_required("SUPER_ADMIN")
+def team_add():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        description = request.form.get("description", "").strip()
 
-@app.route("/switch/<role>")
-@login_required
-def switch_role(role):
+        if not name:
+            flash("Team name is required.", "danger")
+            return render_template(
+                "team_form.html",
+                team=None
+            )
 
-    user = current_user()
+        db = get_db()
 
-    if role not in get_user_roles(user["id"]):
-        return "Role not available", 403
+        db.execute(
+            "INSERT INTO teams (name,description) VALUES (?,?)",
+            (name, description)
+        )
+        db.commit()
 
-    session["role"] = role
+        log_activity(
+            session["user_id"],
+            f"{session['name']} created team {name}"
+        )
 
-    return redirect("/dashboard")
+        flash("Team created successfully.", "success")
+        return redirect(url_for("teams_list"))
+
+    return render_template(
+        "team_form.html",
+        team=None
+    )
 
 
-# ============================================================
+@app.route("/teams/edit/<int:team_id>", methods=["GET", "POST"])
+@role_required("SUPER_ADMIN")
+def team_edit(team_id):
+    db = get_db()
+
+    team = db.execute(
+        "SELECT * FROM teams WHERE id=?",
+        (team_id,)
+    ).fetchone()
+
+    if not team:
+        flash("Team not found.", "danger")
+        return redirect(url_for("teams_list"))
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        description = request.form.get("description", "").strip()
+
+        if not name:
+            flash("Team name is required.", "danger")
+            return render_template(
+                "team_form.html",
+                team=team
+            )
+
+        db.execute(
+            "UPDATE teams SET name=?,description=? WHERE id=?",
+            (name, description, team_id)
+        )
+        db.commit()
+
+        log_activity(
+            session["user_id"],
+            f"{session['name']} updated team {name}"
+        )
+
+        flash("Team updated successfully.", "success")
+        return redirect(url_for("teams_list"))
+
+    return render_template(
+        "team_form.html",
+        team=team
+    )
+
+
+@app.route("/teams/delete/<int:team_id>", methods=["POST"])
+@role_required("SUPER_ADMIN")
+def team_delete(team_id):
+    db = get_db()
+
+    team = db.execute(
+        "SELECT * FROM teams WHERE id=?",
+        (team_id,)
+    ).fetchone()
+
+    if not team:
+        flash("Team not found.", "danger")
+        return redirect(url_for("teams_list"))
+
+    try:
+        db.execute(
+            "DELETE FROM teams WHERE id=?",
+            (team_id,)
+        )
+        db.commit()
+
+        log_activity(
+            session["user_id"],
+            f"{session['name']} deleted team {team['name']}"
+        )
+
+        flash("Team deleted successfully.", "success")
+
+    except sqlite3.IntegrityError:
+        db.rollback()
+        flash(
+            "This team cannot be deleted because users or tasks are still linked to it.",
+            "danger"
+        )
+
+    return redirect(url_for("teams_list"))
+
+
+# ---------------------------------------------------------------------------
 # TASKS
-# ============================================================
+# ---------------------------------------------------------------------------
 
 @app.route("/tasks")
 @login_required
-def tasks_page():
+def tasks_list():
+    db = get_db()
+    role = session["role"]
 
-    user = current_user()
-    role = current_role()
+    q = request.args.get("q", "").strip()
+    team_filter = request.args.get("team", "")
+    member_filter = request.args.get("member", "")
+    status_filter = request.args.get("status", "")
+    priority_filter = request.args.get("priority", "")
 
-    conn = db()
+    base_select = """
+        SELECT
+            tk.*,
+            t.name AS team_name,
+            u.name AS assignee
+        FROM tasks tk
+        LEFT JOIN teams t ON tk.team_id=t.id
+        LEFT JOIN users u ON tk.assigned_to=u.id
+    """
 
     if role == "SUPER_ADMIN":
-
-        tasks = conn.execute("""
-            SELECT
-                tasks.*,
-                teams.name team_name,
-                users.name member_name
-            FROM tasks
-            LEFT JOIN teams
-            ON tasks.team_id=teams.id
-            LEFT JOIN users
-            ON tasks.assigned_to=users.id
-            ORDER BY tasks.id DESC
-        """).fetchall()
+        sql = base_select + " WHERE 1=1"
+        params = []
 
     elif role == "ADMIN":
-
-        team = get_team_for_user(user["id"])
-
-        tasks = conn.execute("""
-            SELECT
-                tasks.*,
-                teams.name team_name,
-                users.name member_name
-            FROM tasks
-            LEFT JOIN teams
-            ON tasks.team_id=teams.id
-            LEFT JOIN users
-            ON tasks.assigned_to=users.id
-            WHERE teams.name=?
-            ORDER BY tasks.id DESC
-        """, (team,)).fetchall()
+        sql = base_select + " WHERE tk.team_id=?"
+        params = [session["team_id"]]
 
     else:
+        sql = base_select + " WHERE tk.assigned_to=?"
+        params = [session["user_id"]]
 
-        tasks = conn.execute("""
-            SELECT
-                tasks.*,
-                teams.name team_name,
-                users.name member_name
-            FROM tasks
-            LEFT JOIN teams
-            ON tasks.team_id=teams.id
-            LEFT JOIN users
-            ON tasks.assigned_to=users.id
-            WHERE tasks.assigned_to=?
-            ORDER BY tasks.id DESC
-        """, (user["id"],)).fetchall()
+    if q:
+        sql += " AND tk.title LIKE ?"
+        params.append(f"%{q}%")
 
-    conn.close()
+    if team_filter and role == "SUPER_ADMIN":
+        sql += " AND tk.team_id=?"
+        params.append(team_filter)
 
-    today_str = date.today().isoformat()
+    if member_filter and role != "TEAM_MEMBER":
+        sql += " AND tk.assigned_to=?"
+        params.append(member_filter)
 
-    overdue_tasks = [
-        t for t in tasks
-        if t["due_date"]
-        and t["due_date"] < today_str
-        and t["status"] != "COMPLETED"
-    ]
+    if status_filter:
+        sql += " AND tk.status=?"
+        params.append(status_filter)
 
-    body = """
+    if priority_filter:
+        sql += " AND tk.priority=?"
+        params.append(priority_filter)
 
-    <div style="
-    display:flex;
-    justify-content:space-between;
-    align-items:center">
+    sql += " ORDER BY tk.created_at DESC"
 
-        <div>
-            <h1>📋 Tasks</h1>
-            <div class="subtitle">
-                Track team work and results.
-            </div>
-        </div>
+    tasks = db.execute(sql, params).fetchall()
 
-    """
+    teams = db.execute(
+        "SELECT * FROM teams ORDER BY id"
+    ).fetchall()
 
-    if role in ["SUPER_ADMIN", "ADMIN"]:
+    return render_template(
+        "tasks.html",
+        tasks=tasks,
+        teams=teams,
+        q=q,
+        team_filter=team_filter,
+        member_filter=member_filter,
+        status_filter=status_filter,
+        priority_filter=priority_filter
+    )
 
-        body += """
-        <a class="btn" href="/add-task">
-            + Add Task
-        </a>
-        """
 
-    body += "</div>"
-
-    if role in ["SUPER_ADMIN", "ADMIN"] and overdue_tasks:
-
-        body += f"""
-
-        <div class="card"
-        style="border:2px solid #ef4444">
-
-            <h2 style="color:#ef4444">
-                ⏰ Overdue Tasks ({len(overdue_tasks)})
-            </h2>
-
-        """
-
-        for ot in overdue_tasks:
-
-            body += f"""
-
-            <div class="activity">
-
-                🔴 <b>{ot["title"]}</b>
-                — 👤 {ot["member_name"] or "-"}
-                — due {ot["due_date"]}
-
-            </div>
-
-            """
-
-        body += "</div>"
-
-    if not tasks:
-
-        body += """
-
-        <div class="card">
-            No tasks found.
-        </div>
-
-        """
-
-    for t in tasks:
-
-        is_overdue = (
-            t["due_date"]
-            and t["due_date"] < today_str
-            and t["status"] != "COMPLETED"
-        )
-
-        status = (
-            "🟢 COMPLETED"
-            if t["status"] == "COMPLETED"
-            else "🔴 OVERDUE"
-            if is_overdue
-            else "🟡 " + t["status"]
-        )
-
-        card_style = (
-            'style="border:2px solid #ef4444"'
-            if is_overdue
-            else ""
-        )
-
-        body += f"""
-
-        <div class="card" {card_style}>
-
-            <h2>
-                {t["title"]}
-            </h2>
-
-            <p>
-                {t["description"]}
-            </p>
-
-            <p>
-                🏢 Team:
-                <b>{t["team_name"] or "-"}</b>
-            </p>
-
-            <p>
-                👤 Assigned:
-                <b>{t["member_name"] or "-"}</b>
-            </p>
-
-            <p>
-                🔥 Priority:
-                <b>{t["priority"]}</b>
-            </p>
-
-            <p>
-                📅 Due Date:
-                <b>{t["due_date"] or "Not set"}</b>
-            </p>
-
-            <span class="badge">
-                {status}
-            </span>
-
-        """
-
-        if t["result"]:
-
-            body += f"""
-
-            <div class="card">
-
-                <b>✅ Task Result</b>
-
-                <p>
-                    {t["result"]}
-                </p>
-
-            """
-
-            if t["attachment"]:
-
-                body += f"""
-
-                <a class="btn purple"
-                href="/uploads/{t["attachment"]}"
-                target="_blank">
-                    📎 Download Attachment
-                </a>
-
-                """
-
-            body += "</div>"
-
-        if (
-            role == "TEAM_MEMBER"
-            and t["assigned_to"] == user["id"]
-            and t["status"] != "COMPLETED"
-        ):
-
-            body += f"""
-
-            <form method="POST"
-            action="/result/{t["id"]}"
-            enctype="multipart/form-data">
-
-                <label>
-                    Add Task Result
-                </label>
-
-                <textarea
-                name="result"
-                placeholder="Explain your completed work..."
-                required></textarea>
-
-                <label>
-                    Attach File (optional)
-                </label>
-
-                <input
-                type="file"
-                name="attachment">
-
-                <button class="btn green">
-                    ✅ SUBMIT RESULT
-                </button>
-
-            </form>
-
-            """
-
-        body += "</div>"
-
-    return page("Tasks", body)
-
-
-# ============================================================
-# ADD TASK
-# ============================================================
-
-@app.route("/add-task", methods=["GET", "POST"])
+@app.route("/tasks/add", methods=["GET", "POST"])
 @role_required("SUPER_ADMIN", "ADMIN")
-def add_task():
+def task_add():
+    db = get_db()
 
-    user = current_user()
-    role = current_role()
-
-    message = ""
-
-    conn = db()
+    if session["role"] == "SUPER_ADMIN":
+        teams = db.execute(
+            "SELECT * FROM teams ORDER BY id"
+        ).fetchall()
+    else:
+        teams = db.execute(
+            "SELECT * FROM teams WHERE id=?",
+            (session["team_id"],)
+        ).fetchall()
 
     if request.method == "POST":
-
-        title = request.form["title"]
-        description = request.form["description"]
-        team_name = request.form["team"]
-        assigned_email = request.form["assigned"]
-        priority = request.form["priority"]
+        title = request.form.get("title", "").strip()
+        description = request.form.get("description", "").strip()
+        team_id = request.form.get("team_id")
+        assigned_to = request.form.get("assigned_to") or None
+        priority = request.form.get("priority", "Medium")
         due_date = request.form.get("due_date") or None
 
-        team = conn.execute(
-            "SELECT id FROM teams WHERE name=?",
-            (team_name,)
-        ).fetchone()
+        if session["role"] == "ADMIN":
+            team_id = session["team_id"]
 
-        assigned = conn.execute(
-            "SELECT id FROM users WHERE email=?",
-            (assigned_email,)
-        ).fetchone()
-
-        if team and assigned:
-
-            conn.execute("""
-                INSERT INTO tasks
-                (
-                    title,
-                    description,
-                    team_id,
-                    assigned_to,
-                    priority,
-                    status,
-                    due_date,
-                    created_at
-                )
-                VALUES (?, ?, ?, ?, ?, 'NEW', ?, ?)
-            """, (
-                title,
-                description,
-                team["id"],
-                assigned["id"],
-                priority,
-                due_date,
-                time_now()
-            ))
-
-            conn.commit()
-
-            add_activity(
-                f"New task '{title}' created",
-                "📋",
-                user["id"]
+        if not title or not team_id:
+            flash("Task title and team are required.", "danger")
+            return render_template(
+                "task_form.html",
+                teams=teams,
+                task=None,
+                members=[]
             )
 
-            message = "Task created successfully."
+        # Validate assignee belongs to selected team.
+        if assigned_to:
+            member = db.execute("""
+                SELECT id
+                FROM users
+                WHERE id=?
+                AND team_id=?
+                AND status='Active'
+            """, (assigned_to, team_id)).fetchone()
 
-    if role == "ADMIN":
+            if not member:
+                assigned_to = None
 
-        team_name = get_team_for_user(user["id"])
+        db.execute("""
+            INSERT INTO tasks
+            (title,description,team_id,assigned_to,created_by,
+             priority,due_date)
+            VALUES (?,?,?,?,?,?,?)
+        """, (
+            title,
+            description,
+            team_id,
+            assigned_to,
+            session["user_id"],
+            priority,
+            due_date
+        ))
 
-        team_rows = conn.execute(
-            "SELECT * FROM teams WHERE name=?",
-            (team_name,)
-        ).fetchall()
+        db.commit()
 
-        member_rows = conn.execute("""
-            SELECT users.*
-            FROM users
-            JOIN team_members
-            ON users.id=team_members.user_id
-            JOIN teams
-            ON teams.id=team_members.team_id
-            WHERE teams.name=?
-            AND users.id != ?
-        """, (team_name, user["id"])).fetchall()
+        log_activity(
+            session["user_id"],
+            f"{session['name']} created task '{title}'"
+        )
 
-    else:
+        flash("Task created successfully.", "success")
+        return redirect(url_for("tasks_list"))
 
-        team_rows = conn.execute(
-            "SELECT * FROM teams"
-        ).fetchall()
+    if teams:
+        team_ids = [str(t["id"]) for t in teams]
+        placeholders = ",".join("?" for _ in team_ids)
 
-        member_rows = conn.execute("""
+        members = db.execute(
+            f"""
             SELECT *
             FROM users
-            WHERE id IN (
-                SELECT user_id
-                FROM roles
-                WHERE role='TEAM_MEMBER'
-            )
-        """).fetchall()
+            WHERE status='Active'
+            AND team_id IN ({placeholders})
+            ORDER BY name
+            """,
+            team_ids
+        ).fetchall()
+    else:
+        members = []
 
-    conn.close()
-
-    team_options = ""
-
-    for t in team_rows:
-
-        team_options += f"""
-        <option value="{t["name"]}">
-            {t["name"]}
-        </option>
-        """
-
-    member_options = ""
-
-    for m in member_rows:
-
-        member_options += f"""
-        <option value="{m["email"]}">
-            {m["name"]} — {m["email"]}
-        </option>
-        """
-
-    body = f"""
-
-    <h1>➕ Create New Task</h1>
-
-    <div class="subtitle">
-        Assign a task to a team member.
-    </div>
-
-    <div class="card">
-
-        <p style="color:#10b981">
-            {message}
-        </p>
-
-        <form method="POST">
-
-            <label>Task Title</label>
-
-            <input
-            name="title"
-            placeholder="Build Login Page"
-            required>
-
-            <label>Description</label>
-
-            <textarea
-            name="description"
-            placeholder="Describe the task..."
-            required></textarea>
-
-            <label>Team</label>
-
-            <select name="team">
-                {team_options}
-            </select>
-
-            <label>Assign To</label>
-
-            <select name="assigned">
-                {member_options}
-            </select>
-
-            <label>Priority</label>
-
-            <select name="priority">
-                <option>LOW</option>
-                <option selected>MEDIUM</option>
-                <option>HIGH</option>
-                <option>CRITICAL</option>
-            </select>
-
-            <label>Due Date</label>
-
-            <input
-            type="date"
-            name="due_date">
-
-            <button class="btn">
-                🚀 CREATE TASK
-            </button>
-
-        </form>
-
-    </div>
-
-    """
-
-    return page("Add Task", body)
+    return render_template(
+        "task_form.html",
+        teams=teams,
+        task=None,
+        members=members
+    )
 
 
-# ============================================================
-# TASK RESULT
-# ============================================================
+@app.route("/tasks/members/<int:team_id>")
+@role_required("SUPER_ADMIN", "ADMIN")
+def task_members_for_team(team_id):
+    db = get_db()
 
-@app.route("/result/<int:task_id>", methods=["POST"])
-@login_required
-def task_result(task_id):
+    if (
+        session["role"] == "ADMIN"
+        and team_id != session["team_id"]
+    ):
+        return {"members": []}
 
-    user = current_user()
+    members = db.execute("""
+        SELECT id, name, role
+        FROM users
+        WHERE team_id=?
+        AND status='Active'
+        ORDER BY role DESC, name ASC
+    """, (team_id,)).fetchall()
 
-    result = request.form["result"]
+    return {
+        "members": [
+            {
+                "id": m["id"],
+                "name": f"{m['name']} ({m['role'].replace('_', ' ')})" if m["role"] != "TEAM_MEMBER" else m["name"]
+            }
+            for m in members
+        ]
+    }
 
-    conn = db()
 
-    task = conn.execute(
+@app.route("/tasks/edit/<int:task_id>", methods=["GET", "POST"])
+@role_required("SUPER_ADMIN", "ADMIN")
+def task_edit(task_id):
+    db = get_db()
+
+    task = db.execute(
         "SELECT * FROM tasks WHERE id=?",
         (task_id,)
     ).fetchone()
 
     if not task:
-        conn.close()
-        return "Task not found", 404
+        flash("Task not found.", "danger")
+        return redirect(url_for("tasks_list"))
 
-    if task["assigned_to"] != user["id"]:
-        conn.close()
-        return "Access denied", 403
+    if (
+        session["role"] == "ADMIN"
+        and task["team_id"] != session["team_id"]
+    ):
+        flash("You do not have permission to perform this action.", "danger")
+        return redirect(url_for("tasks_list"))
 
-    attachment_name = task["attachment"]
+    if session["role"] == "SUPER_ADMIN":
+        teams = db.execute(
+            "SELECT * FROM teams ORDER BY id"
+        ).fetchall()
+    else:
+        teams = db.execute(
+            "SELECT * FROM teams WHERE id=?",
+            (session["team_id"],)
+        ).fetchall()
 
-    uploaded = request.files.get("attachment")
+    if request.method == "POST":
+        title = request.form.get("title", "").strip()
+        description = request.form.get("description", "").strip()
+        assigned_to = request.form.get("assigned_to") or None
+        priority = request.form.get("priority", "Medium")
+        due_date = request.form.get("due_date") or None
+        status = request.form.get("status", task["status"])
 
-    if uploaded and uploaded.filename:
+        if not title:
+            flash("Task title is required.", "danger")
+            members = db.execute("""
+                SELECT *
+                FROM users
+                WHERE team_id=?
+                AND status='Active'
+                ORDER BY name
+            """, (task["team_id"],)).fetchall()
 
-        safe_name = secure_filename(uploaded.filename)
-        attachment_name = f"task{task_id}_{safe_name}"
+            return render_template(
+                "task_form.html",
+                teams=teams,
+                task=task,
+                members=members
+            )
 
-        uploaded.save(
-            os.path.join(UPLOAD_FOLDER, attachment_name)
+        # Admin must stay inside own team.
+        team_id = task["team_id"]
+
+        if assigned_to:
+            valid_member = db.execute("""
+                SELECT id
+                FROM users
+                WHERE id=?
+                AND team_id=?
+                AND status='Active'
+            """, (assigned_to, team_id)).fetchone()
+
+            if not valid_member:
+                assigned_to = None
+
+        completed_at = task["completed_at"]
+        points_awarded = task["points_awarded"]
+
+        if status == "Completed" and task["status"] != "Completed":
+            completed_at = datetime.now().isoformat(
+                timespec="seconds"
+            )
+
+            if not points_awarded and assigned_to:
+                db.execute(
+                    "UPDATE users SET points=points+? WHERE id=?",
+                    (POINTS_PER_TASK, assigned_to)
+                )
+                points_awarded = 1
+
+        db.execute("""
+            UPDATE tasks
+            SET title=?,
+                description=?,
+                assigned_to=?,
+                priority=?,
+                due_date=?,
+                status=?,
+                completed_at=?,
+                points_awarded=?
+            WHERE id=?
+        """, (
+            title,
+            description,
+            assigned_to,
+            priority,
+            due_date,
+            status,
+            completed_at,
+            points_awarded,
+            task_id
+        ))
+
+        db.commit()
+
+        log_activity(
+            session["user_id"],
+            f"{session['name']} updated task '{title}'"
         )
 
-    conn.execute("""
+        flash("Task updated successfully.", "success")
+        return redirect(url_for("tasks_list"))
+
+    members = db.execute("""
+        SELECT *
+        FROM users
+        WHERE team_id=?
+        AND role='TEAM_MEMBER'
+        ORDER BY name
+    """, (task["team_id"],)).fetchall()
+
+    return render_template(
+        "task_form.html",
+        teams=teams,
+        task=task,
+        members=members
+    )
+
+
+@app.route("/tasks/status/<int:task_id>", methods=["POST"])
+@login_required
+def task_update_status(task_id):
+    db = get_db()
+
+    task = db.execute(
+        "SELECT * FROM tasks WHERE id=?",
+        (task_id,)
+    ).fetchone()
+
+    if not task:
+        flash("Task not found.", "danger")
+        return redirect(url_for("tasks_list"))
+
+    if session["role"] == "TEAM_MEMBER":
+        if task["assigned_to"] != session["user_id"]:
+            flash(
+                "You do not have permission to perform this action.",
+                "danger"
+            )
+            return redirect(url_for("tasks_list"))
+
+    elif session["role"] == "ADMIN":
+        if task["team_id"] != session["team_id"]:
+            flash(
+                "You do not have permission to perform this action.",
+                "danger"
+            )
+            return redirect(url_for("tasks_list"))
+
+    new_status = request.form.get("status")
+
+    if new_status not in (
+        "Pending",
+        "In Progress",
+        "Completed"
+    ):
+        flash("Invalid status.", "danger")
+        return redirect(url_for("tasks_list"))
+
+    completed_at = task["completed_at"]
+    points_awarded = task["points_awarded"]
+
+    if (
+        new_status == "Completed"
+        and task["status"] != "Completed"
+    ):
+        completed_at = datetime.now().isoformat(
+            timespec="seconds"
+        )
+
+        if not points_awarded and task["assigned_to"]:
+            db.execute(
+                "UPDATE users SET points=points+? WHERE id=?",
+                (
+                    POINTS_PER_TASK,
+                    task["assigned_to"]
+                )
+            )
+            points_awarded = 1
+
+    db.execute("""
         UPDATE tasks
-        SET result=?,
-            status='COMPLETED',
+        SET status=?,
             completed_at=?,
-            attachment=?
+            points_awarded=?
         WHERE id=?
     """, (
-        result,
-        time_now(),
-        attachment_name,
+        new_status,
+        completed_at,
+        points_awarded,
         task_id
     ))
 
-    conn.commit()
-    conn.close()
+    db.commit()
 
-    add_activity(
-        f"{user['name']} completed task",
-        "✅",
-        user["id"]
+    log_activity(
+        session["user_id"],
+        f"{session['name']} marked task '{task['title']}' as {new_status}"
     )
 
-    return redirect("/tasks")
+    flash("Task status updated.", "success")
+    return redirect(url_for("tasks_list"))
 
 
-# ============================================================
-# DOUBTS
-# ============================================================
-
-@app.route("/doubts")
-@login_required
-def doubts_page():
-
-    user = current_user()
-    role = current_role()
-
-    conn = db()
-
-    if role == "TEAM_MEMBER":
-
-        rows = conn.execute("""
-            SELECT doubts.*, users.name
-            FROM doubts
-            JOIN users
-            ON doubts.user_id=users.id
-            WHERE doubts.user_id=?
-            ORDER BY doubts.id DESC
-        """, (user["id"],)).fetchall()
-
-    else:
-
-        rows = conn.execute("""
-            SELECT doubts.*, users.name
-            FROM doubts
-            JOIN users
-            ON doubts.user_id=users.id
-            ORDER BY doubts.id DESC
-        """).fetchall()
-
-    conn.close()
-
-    body = """
-
-    <div style="
-    display:flex;
-    justify-content:space-between">
-
-    <h1>💬 Doubts</h1>
-
-    <a class="btn"
-    href="/add-doubt">
-        + Ask Doubt
-    </a>
-
-    </div>
-
-    """
-
-    for d in rows:
-
-        body += f"""
-
-        <div class="card">
-
-            <h2>{d["title"]}</h2>
-
-            <p>
-                {d["question"]}
-            </p>
-
-            <span class="badge">
-                {d["status"]}
-            </span>
-
-            <p>
-                👤 {d["name"]}
-            </p>
-
-            <hr>
-
-            <b>Admin Response</b>
-
-            <p>
-                {d["response"] or
-                "Waiting for admin response..."}
-            </p>
-
-        </div>
-
-        """
-
-    return page("Doubts", body)
-
-
-@app.route("/add-doubt", methods=["GET", "POST"])
-@login_required
-def add_doubt():
-
-    user = current_user()
-    message = ""
-
-    if request.method == "POST":
-
-        conn = db()
-
-        conn.execute("""
-            INSERT INTO doubts
-            (
-                user_id,
-                title,
-                question,
-                status,
-                created_at
-            )
-            VALUES (?, ?, ?, 'OPEN', ?)
-        """, (
-            user["id"],
-            request.form["title"],
-            request.form["question"],
-            time_now()
-        ))
-
-        conn.commit()
-        conn.close()
-
-        add_activity(
-            f"{user['name']} asked a doubt",
-            "💬",
-            user["id"]
-        )
-
-        message = "Doubt submitted successfully."
-
-    body = f"""
-
-    <h1>💬 Ask Doubt</h1>
-
-    <div class="card">
-
-        <p style="color:#10b981">
-            {message}
-        </p>
-
-        <form method="POST">
-
-            <label>Title</label>
-
-            <input
-            name="title"
-            placeholder="What is your doubt?"
-            required>
-
-            <label>Doubt</label>
-
-            <textarea
-            name="question"
-            placeholder="Explain your doubt..."
-            required></textarea>
-
-            <button class="btn">
-                💬 SEND DOUBT
-            </button>
-
-        </form>
-
-    </div>
-
-    """
-
-    return page("Ask Doubt", body)
-
-
-# ============================================================
-# SUGGESTIONS
-# ============================================================
-
-@app.route("/suggestions")
-@login_required
-def suggestions_page():
-
-    user = current_user()
-    role = current_role()
-
-    conn = db()
-
-    if role == "TEAM_MEMBER":
-
-        rows = conn.execute("""
-            SELECT suggestions.*, users.name
-            FROM suggestions
-            JOIN users
-            ON suggestions.user_id=users.id
-            WHERE suggestions.user_id=?
-            ORDER BY suggestions.id DESC
-        """, (user["id"],)).fetchall()
-
-    else:
-
-        rows = conn.execute("""
-            SELECT suggestions.*, users.name
-            FROM suggestions
-            JOIN users
-            ON suggestions.user_id=users.id
-            ORDER BY suggestions.id DESC
-        """).fetchall()
-
-    conn.close()
-
-    body = """
-
-    <div style="
-    display:flex;
-    justify-content:space-between">
-
-    <h1>💡 Suggestions</h1>
-
-    <a class="btn purple"
-    href="/add-suggestion">
-        + Add Suggestion
-    </a>
-
-    </div>
-
-    """
-
-    for s in rows:
-
-        body += f"""
-
-        <div class="card">
-
-            <h2>💡 {s["title"]}</h2>
-
-            <p>
-                {s["description"]}
-            </p>
-
-            <span class="badge">
-                {s["status"]}
-            </span>
-
-            <p>
-                👤 {s["name"]}
-            </p>
-
-            <hr>
-
-            <b>Admin Response</b>
-
-            <p>
-                {s["response"] or
-                "Waiting for admin response..."}
-            </p>
-
-        </div>
-
-        """
-
-    return page("Suggestions", body)
-
-
-@app.route("/add-suggestion", methods=["GET", "POST"])
-@login_required
-def add_suggestion():
-
-    user = current_user()
-    message = ""
-
-    if request.method == "POST":
-
-        conn = db()
-
-        conn.execute("""
-            INSERT INTO suggestions
-            (
-                user_id,
-                title,
-                description,
-                status,
-                created_at
-            )
-            VALUES (?, ?, ?, 'SUBMITTED', ?)
-        """, (
-            user["id"],
-            request.form["title"],
-            request.form["description"],
-            time_now()
-        ))
-
-        conn.commit()
-        conn.close()
-
-        add_activity(
-            f"{user['name']} added a suggestion",
-            "💡",
-            user["id"]
-        )
-
-        message = "Suggestion submitted."
-
-    body = f"""
-
-    <h1>💡 Suggest an Idea</h1>
-
-    <div class="card">
-
-        <p style="color:#10b981">
-            {message}
-        </p>
-
-        <form method="POST">
-
-            <label>Idea Title</label>
-
-            <input
-            name="title"
-            placeholder="Enter your idea"
-            required>
-
-            <label>Description</label>
-
-            <textarea
-            name="description"
-            placeholder="Explain your suggestion..."
-            required></textarea>
-
-            <button class="btn purple">
-                💡 SEND SUGGESTION
-            </button>
-
-        </form>
-
-    </div>
-
-    """
-
-    return page("Suggestion", body)
-
-
-# ============================================================
-# HIT POINTS
-# ============================================================
-
-@app.route("/hit-points")
-@login_required
-def hit_points_page():
-
-    user = current_user()
-    role = current_role()
-
-    conn = db()
-
-    if role == "TEAM_MEMBER":
-
-        rows = conn.execute("""
-            SELECT hit_points.*, users.name
-            FROM hit_points
-            JOIN users
-            ON hit_points.user_id=users.id
-            WHERE hit_points.user_id=?
-            ORDER BY hit_points.id DESC
-        """, (user["id"],)).fetchall()
-
-    else:
-
-        rows = conn.execute("""
-            SELECT hit_points.*, users.name
-            FROM hit_points
-            JOIN users
-            ON hit_points.user_id=users.id
-            ORDER BY hit_points.id DESC
-        """).fetchall()
-
-    conn.close()
-
-    body = """
-
-    <div style="
-    display:flex;
-    justify-content:space-between">
-
-    <h1>⭐ Hit Points</h1>
-
-    <a class="btn yellow"
-    href="/add-hit-point">
-        + Add Hit Point
-    </a>
-
-    </div>
-
-    """
-
-    for h in rows:
-
-        body += f"""
-
-        <div class="card">
-
-            <h2>⭐ {h["title"]}</h2>
-
-            <p>
-                {h["description"]}
-            </p>
-
-            <span class="badge">
-                {h["importance"]}
-            </span>
-
-            <p>
-                👤 {h["name"]}
-            </p>
-
-        </div>
-
-        """
-
-    return page("Hit Points", body)
-
-
-@app.route("/add-hit-point", methods=["GET", "POST"])
-@login_required
-def add_hit_point():
-
-    user = current_user()
-    message = ""
-
-    if request.method == "POST":
-
-        conn = db()
-
-        conn.execute("""
-            INSERT INTO hit_points
-            (
-                user_id,
-                title,
-                description,
-                importance,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            user["id"],
-            request.form["title"],
-            request.form["description"],
-            request.form["importance"],
-            time_now()
-        ))
-
-        conn.commit()
-        conn.close()
-
-        add_activity(
-            f"{user['name']} added a hit point",
-            "⭐",
-            user["id"]
-        )
-
-        message = "Hit Point added."
-
-    body = f"""
-
-    <h1>⭐ Add Hit Point</h1>
-
-    <div class="card">
-
-        <p style="color:#10b981">
-            {message}
-        </p>
-
-        <form method="POST">
-
-            <label>Title</label>
-
-            <input
-            name="title"
-            placeholder="Important point"
-            required>
-
-            <label>Description</label>
-
-            <textarea
-            name="description"
-            placeholder="Explain the point..."
-            required></textarea>
-
-            <label>Importance</label>
-
-            <select name="importance">
-
-                <option>LOW</option>
-                <option>MEDIUM</option>
-                <option>HIGH</option>
-                <option>CRITICAL</option>
-
-            </select>
-
-            <button class="btn yellow">
-                ⭐ ADD HIT POINT
-            </button>
-
-        </form>
-
-    </div>
-
-    """
-
-    return page("Hit Point", body)
-
-
-# ============================================================
-# USER MANAGEMENT
-# ============================================================
-
-@app.route("/users")
-@role_required("SUPER_ADMIN")
-def users_page():
-
-    conn = db()
-
-    users = conn.execute("""
-        SELECT *
-        FROM users
-        ORDER BY id
-    """).fetchall()
-
-    conn.close()
-
-    refreshed = request.args.get("refreshed")
-
-    body = """
-
-    <h1>👥 User Management</h1>
-
-    <div class="subtitle">
-        Manage Team Pulse users.
-    </div>
-
-    """
-
-    if refreshed:
-
-        body += """
-
-        <div class="card"
-        style="border:2px solid #10b981">
-            <p style="color:#10b981;margin:0">
-                🔄 Backup data refreshed — all records were reset
-                back to the default demo data.
-            </p>
-        </div>
-
-        """
-
-    body += """
-
-    <div class="card">
-
-    <div style="
-    display:flex;
-    flex-wrap:wrap;
-    gap:10px">
-
-    <a class="btn"
-    href="/add-user">
-        + Add User
-    </a>
-
-    <a class="btn yellow"
-    href="/refresh-backup"
-    onclick="return confirm('Refresh backup data? This will erase ALL current users, teams, tasks, doubts, suggestions and hit points, and reload the original demo data. This cannot be undone.')">
-        🔄 Refresh Backup Data
-    </a>
-
-    </div>
-
-    <br>
-
-    """
-
-    for u in users:
-
-        body += f"""
-
-        <div class="user-row">
-
-            <div class="user-info">
-                <b>{u["name"]}</b><br>
-                <span class="user-email">{u["email"]}</span>
-            </div>
-
-            <div class="user-actions">
-
-                <a class="action-box password"
-                href="/password/{u["id"]}">
-                    <span class="action-icon">🔐</span>
-                    Password
-                </a>
-
-                <a class="action-box delete"
-                href="/delete-user/{u["id"]}"
-                onclick="return confirm('Delete this user? This cannot be undone.')">
-                    <span class="action-icon">🗑️</span>
-                    Delete
-                </a>
-
-            </div>
-
-        </div>
-
-        """
-
-    body += """
-
-    </div>
-
-    """
-
-    return page("Users", body)
-
-
-# ============================================================
-# REFRESH BACKUP DATA
-# ============================================================
-
-@app.route("/refresh-backup")
-@role_required("SUPER_ADMIN")
-def refresh_backup():
-
-    current = current_user()
-
-    refresh_backup_data()
-
-    add_activity(
-        f"{current['name']} refreshed backup data — all records reset to demo data",
-        "🔄"
-    )
-
-    # The account that triggered this may no longer exist post-reset,
-    # so send them back to login to re-authenticate against the
-    # freshly-seeded accounts.
-    session.clear()
-
-    return redirect("/login?refreshed=1")
-
-
-# ============================================================
-# ADD USER
-# ============================================================
-
-@app.route("/add-user", methods=["GET", "POST"])
+@app.route("/tasks/delete/<int:task_id>", methods=["POST"])
 @role_required("SUPER_ADMIN", "ADMIN")
-def add_user():
+def task_delete(task_id):
+    db = get_db()
 
-    current = current_user()
-    role = current_role()
+    task = db.execute(
+        "SELECT * FROM tasks WHERE id=?",
+        (task_id,)
+    ).fetchone()
 
-    message = ""
+    if not task:
+        flash("Task not found.", "danger")
+        return redirect(url_for("tasks_list"))
 
-    conn = db()
+    if (
+        session["role"] == "ADMIN"
+        and task["team_id"] != session["team_id"]
+    ):
+        flash("You do not have permission to perform this action.", "danger")
+        return redirect(url_for("tasks_list"))
 
-    teams = conn.execute(
-        "SELECT * FROM teams"
+    try:
+        db.execute(
+            "DELETE FROM tasks WHERE id=?",
+            (task_id,)
+        )
+        db.commit()
+
+        log_activity(
+            session["user_id"],
+            f"{session['name']} deleted task '{task['title']}'"
+        )
+
+        flash("Task deleted successfully.", "success")
+
+    except sqlite3.IntegrityError:
+        db.rollback()
+        flash(
+            "Task cannot be deleted because another record depends on it.",
+            "danger"
+        )
+
+    return redirect(url_for("tasks_list"))
+
+
+# ---------------------------------------------------------------------------
+# DOUBTS
+# ---------------------------------------------------------------------------
+
+@app.route("/doubts", methods=["GET", "POST"])
+@login_required
+def doubts_list():
+    db = get_db()
+    role = session["role"]
+
+    if request.method == "POST":
+        question = request.form.get("question", "").strip()
+
+        if question:
+            db.execute("""
+                INSERT INTO doubts
+                (user_id,team_id,question)
+                VALUES (?,?,?)
+            """, (
+                session["user_id"],
+                session["team_id"],
+                question
+            ))
+            db.commit()
+
+            log_activity(
+                session["user_id"],
+                f"{session['name']} submitted a doubt"
+            )
+
+            flash(
+                "Doubt submitted successfully.",
+                "success"
+            )
+
+        return redirect(url_for("doubts_list"))
+
+    status_filter = request.args.get("status", "")
+    q = request.args.get("q", "").strip()
+
+    base = """
+        SELECT
+            d.*,
+            u.name AS asker,
+            t.name AS team_name
+        FROM doubts d
+        JOIN users u ON d.user_id=u.id
+        JOIN teams t ON d.team_id=t.id
+    """
+
+    if role == "SUPER_ADMIN":
+        sql = base + " WHERE 1=1"
+        params = []
+
+    elif role == "ADMIN":
+        sql = base + " WHERE d.team_id=?"
+        params = [session["team_id"]]
+
+    else:
+        sql = base + " WHERE d.user_id=?"
+        params = [session["user_id"]]
+
+    if status_filter:
+        sql += " AND d.status=?"
+        params.append(status_filter)
+
+    if q:
+        sql += " AND d.question LIKE ?"
+        params.append(f"%{q}%")
+
+    sql += " ORDER BY d.created_at DESC"
+
+    doubts = db.execute(sql, params).fetchall()
+
+    return render_template(
+        "doubts.html",
+        doubts=doubts,
+        status_filter=status_filter,
+        q=q
+    )
+
+
+@app.route("/doubts/answer/<int:doubt_id>", methods=["POST"])
+@role_required("SUPER_ADMIN", "ADMIN")
+def doubt_answer(doubt_id):
+    db = get_db()
+
+    doubt = db.execute(
+        "SELECT * FROM doubts WHERE id=?",
+        (doubt_id,)
+    ).fetchone()
+
+    if not doubt:
+        flash("Doubt not found.", "danger")
+        return redirect(url_for("doubts_list"))
+
+    if (
+        session["role"] == "ADMIN"
+        and doubt["team_id"] != session["team_id"]
+    ):
+        flash("You do not have permission to perform this action.", "danger")
+        return redirect(url_for("doubts_list"))
+
+    answer = request.form.get("answer", "").strip()
+
+    db.execute("""
+        UPDATE doubts
+        SET answer=?,
+            status='Answered',
+            answered_by=?,
+            answered_at=?
+        WHERE id=?
+    """, (
+        answer,
+        session["user_id"],
+        datetime.now().isoformat(timespec="seconds"),
+        doubt_id
+    ))
+
+    db.commit()
+
+    log_activity(
+        session["user_id"],
+        f"{session['name']} answered a doubt"
+    )
+
+    flash(
+        "Doubt answered successfully.",
+        "success"
+    )
+
+    return redirect(url_for("doubts_list"))
+
+
+# ---------------------------------------------------------------------------
+# SUGGESTIONS
+# ---------------------------------------------------------------------------
+
+@app.route("/suggestions", methods=["GET", "POST"])
+@login_required
+def suggestions_list():
+    db = get_db()
+    role = session["role"]
+
+    if request.method == "POST":
+        text = request.form.get("suggestion", "").strip()
+
+        if text:
+            db.execute("""
+                INSERT INTO suggestions
+                (user_id,team_id,suggestion)
+                VALUES (?,?,?)
+            """, (
+                session["user_id"],
+                session["team_id"],
+                text
+            ))
+
+            db.commit()
+
+            log_activity(
+                session["user_id"],
+                f"{session['name']} submitted a suggestion"
+            )
+
+            flash(
+                "Suggestion submitted successfully.",
+                "success"
+            )
+
+        return redirect(url_for("suggestions_list"))
+
+    status_filter = request.args.get("status", "")
+    q = request.args.get("q", "").strip()
+
+    base = """
+        SELECT
+            s.*,
+            u.name AS author,
+            t.name AS team_name
+        FROM suggestions s
+        JOIN users u ON s.user_id=u.id
+        JOIN teams t ON s.team_id=t.id
+    """
+
+    if role == "SUPER_ADMIN":
+        sql = base + " WHERE 1=1"
+        params = []
+
+    elif role == "ADMIN":
+        sql = base + " WHERE s.team_id=?"
+        params = [session["team_id"]]
+
+    else:
+        sql = base + " WHERE s.user_id=?"
+        params = [session["user_id"]]
+
+    if status_filter:
+        sql += " AND s.status=?"
+        params.append(status_filter)
+
+    if q:
+        sql += " AND s.suggestion LIKE ?"
+        params.append(f"%{q}%")
+
+    sql += " ORDER BY s.created_at DESC"
+
+    suggestions = db.execute(
+        sql,
+        params
     ).fetchall()
 
-    conn.close()
+    return render_template(
+        "suggestions.html",
+        suggestions=suggestions,
+        status_filter=status_filter,
+        q=q
+    )
 
-    if request.method == "POST":
 
-        name = request.form["name"]
-        email = request.form["email"].lower()
-        password = request.form["password"]
+@app.route("/suggestions/review/<int:sug_id>", methods=["POST"])
+@role_required("SUPER_ADMIN", "ADMIN")
+def suggestion_review(sug_id):
+    db = get_db()
 
-        selected_role = request.form["role"]
-        team_name = request.form["team"]
+    sug = db.execute(
+        "SELECT * FROM suggestions WHERE id=?",
+        (sug_id,)
+    ).fetchone()
 
-        if role == "ADMIN":
-            selected_role = "TEAM_MEMBER"
-            team_name = get_team_for_user(current["id"])
+    if not sug:
+        flash("Suggestion not found.", "danger")
+        return redirect(url_for("suggestions_list"))
 
-        try:
+    if (
+        session["role"] == "ADMIN"
+        and sug["team_id"] != session["team_id"]
+    ):
+        flash("You do not have permission to perform this action.", "danger")
+        return redirect(url_for("suggestions_list"))
 
-            user_id = create_user(
-                name,
-                email,
-                password,
-                selected_role
-            )
+    status = request.form.get(
+        "status",
+        "Reviewed"
+    )
 
-            add_member_to_team(
-                user_id,
-                team_name
-            )
+    response = request.form.get(
+        "response",
+        ""
+    ).strip()
 
-            add_activity(
-                f"{name} added to Team Pulse",
-                "👤",
-                current["id"]
-            )
+    db.execute("""
+        UPDATE suggestions
+        SET status=?,
+            response=?,
+            reviewed_by=?,
+            updated_at=?
+        WHERE id=?
+    """, (
+        status,
+        response,
+        session["user_id"],
+        datetime.now().isoformat(timespec="seconds"),
+        sug_id
+    ))
 
-            message = "User created successfully."
+    db.commit()
 
-        except sqlite3.IntegrityError:
+    log_activity(
+        session["user_id"],
+        f"{session['name']} reviewed a suggestion"
+    )
 
-            message = "Email already exists."
+    flash(
+        "Suggestion updated successfully.",
+        "success"
+    )
 
-    team_options = ""
+    return redirect(url_for("suggestions_list"))
 
-    for t in teams:
 
-        team_options += f"""
-        <option>
-            {t["name"]}
-        </option>
-        """
+# ---------------------------------------------------------------------------
+# LEADERBOARD
+# ---------------------------------------------------------------------------
 
-    if role == "ADMIN":
+@app.route("/leaderboard")
+@login_required
+def leaderboard():
+    db = get_db()
 
-        roles = """
-        <option>TEAM_MEMBER</option>
-        """
+    if session["role"] == "SUPER_ADMIN":
+        rows = db.execute("""
+            SELECT
+                u.name,
+                u.points,
+                t.name AS team_name
+            FROM users u
+            LEFT JOIN teams t ON u.team_id=t.id
+            WHERE u.role='TEAM_MEMBER'
+            ORDER BY u.points DESC, u.name
+        """).fetchall()
 
     else:
+        rows = db.execute("""
+            SELECT
+                u.name,
+                u.points,
+                t.name AS team_name
+            FROM users u
+            LEFT JOIN teams t ON u.team_id=t.id
+            WHERE u.role='TEAM_MEMBER'
+            AND u.team_id=?
+            ORDER BY u.points DESC, u.name
+        """, (
+            session["team_id"],
+        )).fetchall()
 
-        roles = """
-        <option>TEAM_MEMBER</option>
-        <option>TEAM_LEADER</option>
-        <option>ADMIN</option>
-        """
-
-    body = f"""
-
-    <h1>👤 Add New User</h1>
-
-    <div class="card">
-
-        <p style="color:#10b981">
-            {message}
-        </p>
-
-        <form method="POST">
-
-            <label>Name</label>
-
-            <input
-            name="name"
-            required>
-
-            <label>Email</label>
-
-            <input
-            type="email"
-            name="email"
-            required>
-
-            <label>Password</label>
-
-            <input
-            type="password"
-            name="password"
-            required>
-
-            <label>Role</label>
-
-            <select name="role">
-                {roles}
-            </select>
-
-            <label>Team</label>
-
-            <select name="team">
-                {team_options}
-            </select>
-
-            <button class="btn green">
-                CREATE USER
-            </button>
-
-        </form>
-
-    </div>
-
-    """
-
-    return page("Add User", body)
+    return render_template(
+        "leaderboard.html",
+        rows=rows
+    )
 
 
-# ============================================================
-# DELETE USER
-# ============================================================
+# ---------------------------------------------------------------------------
+# ACTIVITIES
+# ---------------------------------------------------------------------------
 
-@app.route("/delete-user/<int:user_id>")
+@app.route("/activities")
 @role_required("SUPER_ADMIN")
-def delete_user(user_id):
+def activities_list():
+    db = get_db()
 
-    current = current_user()
+    rows = db.execute("""
+        SELECT
+            a.*,
+            u.name AS user_name
+        FROM activities a
+        LEFT JOIN users u ON a.user_id=u.id
+        ORDER BY a.created_at DESC
+        LIMIT 300
+    """).fetchall()
 
-    if user_id == current["id"]:
-        return "You cannot delete your own account", 403
+    return render_template(
+        "activities.html",
+        rows=rows
+    )
 
-    conn = db()
 
-    user = conn.execute(
+# ---------------------------------------------------------------------------
+# PROFILE
+# ---------------------------------------------------------------------------
+
+@app.route("/profile", methods=["GET", "POST"])
+@login_required
+def profile():
+    db = get_db()
+
+    user = db.execute(
         "SELECT * FROM users WHERE id=?",
-        (user_id,)
+        (session["user_id"],)
     ).fetchone()
 
     if not user:
-        conn.close()
-        return "User not found", 404
+        session.clear()
+        return redirect(url_for("login"))
 
-    conn.execute(
-        "DELETE FROM users WHERE id=?",
-        (user_id,)
-    )
+    team = None
 
-    conn.commit()
-    conn.close()
-
-    add_activity(
-        f"{user['name']} removed from Team Pulse",
-        "🗑️",
-        current["id"]
-    )
-
-    return redirect("/users")
-
-
-# ============================================================
-# PASSWORD CHANGE
-# ============================================================
-
-@app.route("/password/<int:user_id>", methods=["GET", "POST"])
-@role_required("SUPER_ADMIN")
-def password_change(user_id):
-
-    conn = db()
-
-    user = conn.execute(
-        "SELECT * FROM users WHERE id=?",
-        (user_id,)
-    ).fetchone()
-
-    if not user:
-        conn.close()
-        return "User not found", 404
-
-    message = ""
+    if user["team_id"]:
+        team = db.execute(
+            "SELECT * FROM teams WHERE id=?",
+            (user["team_id"],)
+        ).fetchone()
 
     if request.method == "POST":
-
-        new_password = request.form["password"]
-
-        conn.execute("""
-            UPDATE users
-            SET password_hash=?
-            WHERE id=?
-        """, (
-            generate_password_hash(new_password),
-            user_id
-        ))
-
-        conn.commit()
-
-        message = "Password changed successfully."
-
-        add_activity(
-            f"Password changed for {user['email']}",
-            "🔐"
+        current_password = request.form.get(
+            "current_password",
+            ""
         )
 
-    conn.close()
+        new_password = request.form.get(
+            "new_password",
+            ""
+        )
 
-    body = f"""
+        confirm_password = request.form.get(
+            "confirm_password",
+            ""
+        )
 
-    <h1>🔐 Change Password</h1>
-
-    <div class="card">
-
-        <p>
-            Account:
-            <b>{user["email"]}</b>
-        </p>
-
-        <p style="color:#10b981">
-            {message}
-        </p>
-
-        <form method="POST">
-
-            <label>New Password</label>
-
-            <input
-            type="password"
-            name="password"
-            minlength="6"
-            required>
-
-            <button class="btn">
-                CHANGE PASSWORD
-            </button>
-
-        </form>
-
-    </div>
-
-    """
-
-    return page("Change Password", body)
-
-
-# ============================================================
-# ADD TEAM
-# ============================================================
-
-@app.route("/add-team", methods=["GET", "POST"])
-@role_required("SUPER_ADMIN")
-def add_team():
-
-    message = ""
-
-    if request.method == "POST":
-
-        name = request.form["name"]
-        email = request.form["email"]
-
-        try:
-
-            create_team(name, email)
-
-            add_activity(
-                f"New team {name} created",
-                "🏢"
+        if not check_password_hash(
+            user["password"],
+            current_password
+        ):
+            flash(
+                "Current password is incorrect.",
+                "danger"
             )
 
-            message = "Team created successfully."
+        elif len(new_password) < 6:
+            flash(
+                "New password must be at least 6 characters.",
+                "danger"
+            )
 
-        except sqlite3.IntegrityError:
+        elif new_password != confirm_password:
+            flash(
+                "New passwords do not match.",
+                "danger"
+            )
 
-            message = "Team already exists."
+        else:
+            new_hash = generate_password_hash(new_password, method="pbkdf2:sha256")
+            db.execute(
+                "UPDATE users SET password=? WHERE lower(email)=?",
+                (
+                    new_hash,
+                    user["email"].lower()
+                )
+            )
 
-    body = f"""
+            db.commit()
 
-    <h1>🏢 Add New Team</h1>
+            log_activity(
+                user["id"],
+                f"{user['name']} changed their password"
+            )
 
-    <div class="card">
+            flash(
+                "Password updated successfully.",
+                "success"
+            )
 
-        <p style="color:#10b981">
-            {message}
-        </p>
+            return redirect(url_for("profile"))
 
-        <form method="POST">
+    return render_template(
+        "profile.html",
+        user=user,
+        team=team
+    )
 
-            <label>Team Name</label>
 
-            <input
-            name="name"
-            placeholder="Delta"
-            required>
+# ---------------------------------------------------------------------------
+# REPORTS
+# ---------------------------------------------------------------------------
 
-            <label>Team Email</label>
+@app.route("/reports")
+@role_required("SUPER_ADMIN")
+def reports():
+    db = get_db()
 
-            <input
-            type="email"
-            name="email"
-            placeholder="delta@gmail.com"
-            required>
+    team_perf = db.execute("""
+        SELECT
+            t.name,
+            COUNT(tk.id) AS total,
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN tk.status='Completed' THEN 1
+                        ELSE 0
+                    END
+                ), 0
+            ) AS done
+        FROM teams t
+        LEFT JOIN tasks tk ON tk.team_id=t.id
+        GROUP BY t.id, t.name
+        ORDER BY t.id
+    """).fetchall()
 
-            <button class="btn">
-                CREATE TEAM
-            </button>
+    member_perf = db.execute("""
+        SELECT
+            u.name,
+            t.name AS team_name,
+            u.points,
+            (
+                SELECT COUNT(*)
+                FROM tasks
+                WHERE assigned_to=u.id
+                AND status='Completed'
+            ) AS completed
+        FROM users u
+        LEFT JOIN teams t ON u.team_id=t.id
+        WHERE u.role='TEAM_MEMBER'
+        ORDER BY u.points DESC
+    """).fetchall()
 
-        </form>
+    return render_template(
+        "reports.html",
+        team_perf=team_perf,
+        member_perf=member_perf
+    )
 
-    </div>
 
+@app.route("/reports/export/<kind>")
+@role_required("SUPER_ADMIN")
+def reports_export(kind):
+    db = get_db()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    if kind == "tasks":
+        writer.writerow([
+            "Title",
+            "Team",
+            "Assigned To",
+            "Priority",
+            "Status",
+            "Due Date",
+            "Created At"
+        ])
+
+        rows = db.execute("""
+            SELECT
+                tk.title,
+                t.name AS team_name,
+                u.name AS assignee,
+                tk.priority,
+                tk.status,
+                tk.due_date,
+                tk.created_at
+            FROM tasks tk
+            LEFT JOIN teams t ON tk.team_id=t.id
+            LEFT JOIN users u ON tk.assigned_to=u.id
+            ORDER BY tk.created_at DESC
+        """).fetchall()
+
+        for row in rows:
+            writer.writerow(list(row))
+
+        filename = "task_report.csv"
+
+    elif kind == "points":
+        writer.writerow([
+            "Name",
+            "Team",
+            "Points"
+        ])
+
+        rows = db.execute("""
+            SELECT
+                u.name,
+                t.name AS team_name,
+                u.points
+            FROM users u
+            LEFT JOIN teams t ON u.team_id=t.id
+            WHERE u.role='TEAM_MEMBER'
+            ORDER BY u.points DESC
+        """).fetchall()
+
+        for row in rows:
+            writer.writerow(list(row))
+
+        filename = "points_report.csv"
+
+    elif kind == "teams":
+        writer.writerow([
+            "Team",
+            "Admin",
+            "Members",
+            "Total Tasks",
+            "Completed Tasks"
+        ])
+
+        rows = db.execute("""
+            SELECT
+                t.name,
+                a.name AS admin_name,
+                (
+                    SELECT COUNT(*)
+                    FROM users u
+                    WHERE u.team_id=t.id
+                    AND u.role='TEAM_MEMBER'
+                ),
+                (
+                    SELECT COUNT(*)
+                    FROM tasks tk
+                    WHERE tk.team_id=t.id
+                ),
+                (
+                    SELECT COUNT(*)
+                    FROM tasks tk
+                    WHERE tk.team_id=t.id
+                    AND tk.status='Completed'
+                )
+            FROM teams t
+            LEFT JOIN users a ON t.admin_id=a.id
+            ORDER BY t.id
+        """).fetchall()
+
+        for row in rows:
+            writer.writerow(list(row))
+
+        filename = "team_performance_report.csv"
+
+    else:
+        flash(
+            "Unknown report type.",
+            "danger"
+        )
+        return redirect(url_for("reports"))
+
+    log_activity(
+        session["user_id"],
+        f"{session['name']} exported {filename}"
+    )
+
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition":
+                f"attachment; filename={filename}"
+        }
+    )
+
+
+@app.route("/reports/email-excel", methods=["GET", "POST"])
+@role_required("SUPER_ADMIN")
+def reports_email_excel():
     """
+    Generates styled Excel workbook (.xlsx) with openpyxl and emails it to all Super Admins.
+    """
+    try:
+        from email_exporter import send_excel_report_email
+        res = send_excel_report_email(db_path=DB_PATH)
 
-    return page("Add Team", body)
+        log_activity(
+            session["user_id"],
+            f"{session['name']} triggered automatic Excel report email to Super Admins"
+        )
+
+        if res.get("success"):
+            if res.get("simulated"):
+                flash(
+                    "Excel report generated! (Simulation mode: credentials not configured in .env, file saved locally)",
+                    "info"
+                )
+            else:
+                flash(
+                    f"Excel report successfully emailed to Super Admin(s): {', '.join(res.get('recipients', []))}",
+                    "success"
+                )
+        else:
+            flash(f"Failed to email Excel report: {res.get('message')}", "danger")
+
+    except Exception as exc:
+        app.logger.exception("Error sending Excel email report: %s", exc)
+        flash(f"Error dispatching Excel report: {exc}", "danger")
+
+    return redirect(url_for("reports"))
 
 
-# ============================================================
-# START
-# ============================================================
 
-# Initialize database for both local and production
+# ---------------------------------------------------------------------------
+# HEALTH / DEBUG ROUTE
+# ---------------------------------------------------------------------------
+
+@app.route("/health")
+def health():
+    """
+    Quick test:
+        /health
+    If this works, Flask itself is running.
+    """
+    db = get_db()
+
+    users_count = db.execute(
+        "SELECT COUNT(*) c FROM users"
+    ).fetchone()["c"]
+
+    teams_count = db.execute(
+        "SELECT COUNT(*) c FROM teams"
+    ).fetchone()["c"]
+
+    return {
+        "status": "ok",
+        "database": "connected",
+        "users": users_count,
+        "teams": teams_count,
+        "logged_in": bool(session.get("user_id")),
+        "role": session.get("role"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# ERROR HANDLERS
+# ---------------------------------------------------------------------------
+
+@app.errorhandler(404)
+def not_found(error):
+    try:
+        return render_template(
+            "error.html",
+            code=404,
+            message="Page not found."
+        ), 404
+    except Exception:
+        return "<h1>404 - Page not found</h1>", 404
+
+
+@app.errorhandler(403)
+def forbidden(error):
+    try:
+        return render_template(
+            "error.html",
+            code=403,
+            message="Access forbidden."
+        ), 403
+    except Exception:
+        return "<h1>403 - Access forbidden</h1>", 403
+
+
+@app.errorhandler(400)
+def bad_request(error):
+    try:
+        return render_template(
+            "error.html",
+            code=400,
+            message="Bad request."
+        ), 400
+    except Exception:
+        return "<h1>400 - Bad request</h1>", 400
+
+
+@app.errorhandler(500)
+def server_error(error):
+    # Print the actual traceback in terminal.
+    app.logger.error(
+        "500 ERROR:\n%s",
+        traceback.format_exc()
+    )
+
+    return (
+        """
+        <div style="
+            font-family:Arial;
+            padding:30px;
+            max-width:900px;
+            margin:auto;
+        ">
+            <h1>Team Pulse - Server Error</h1>
+            <p>
+                The server encountered an error.
+                Check the terminal for the full traceback.
+            </p>
+            <p>
+                <a href="/dashboard">Back to Dashboard</a>
+            </p>
+        </div>
+        """,
+        500
+    )
+
+
+# ---------------------------------------------------------------------------
+# AUTOMATED BACKGROUND CRON SCHEDULER
+# ---------------------------------------------------------------------------
+
+def start_automated_report_scheduler():
+    import threading
+    import time
+    from datetime import datetime
+
+    def scheduler_loop():
+        print("[Scheduler] Automated Daily 6:00 PM (18:00 IST) Excel Email Scheduler Active.")
+        last_sent_day = None
+        while True:
+            try:
+                now = datetime.now()
+                # Trigger at 6:00 PM (18:00) every evening
+                if now.hour == 18 and now.minute == 0:
+                    today_key = now.strftime("%Y-%m-%d")
+                    if last_sent_day != today_key:
+                        last_sent_day = today_key
+                        print(f"[Scheduler] ⏰ 6:00 PM Reached ({today_key})! Automatically emailing Excel report to Super Admins...")
+                        from email_exporter import send_excel_report_email
+                        res = send_excel_report_email(db_path=DB_PATH)
+                        print(f"[Scheduler] Daily 6:00 PM Email dispatch result: {res}")
+            except Exception as e:
+                print(f"[Scheduler] Error in 6:00 PM automated report email: {e}")
+
+            time.sleep(30)  # Check every 30 seconds
+
+    thread = threading.Thread(target=scheduler_loop, daemon=True)
+    thread.start()
+
+
+
+# ---------------------------------------------------------------------------
+# STARTUP
+# ---------------------------------------------------------------------------
+
 init_db()
-seed_data()
-
+start_automated_report_scheduler()
 
 if __name__ == "__main__":
-
-    print()
     print("=" * 60)
-    print("                 ⚡ TEAM PULSE")
+    print("TEAM PULSE STARTING")
     print("=" * 60)
-    print("Team Task & Collaboration System")
-    print()
-    print("Database : team_pulse.db")
-    print("Server   : http://127.0.0.1:5000")
-    print()
-    print("Teams    : Alpha | Beta | Gamma")
-    print("Members  : 6")
-    print("Admins   : 3")
-    print("Super    : 3")
+    print(f"Database : {DB_PATH}")
+    print("URL      : http://127.0.0.1:5000")
+    print("Health   : http://127.0.0.1:5000/health")
     print("=" * 60)
-    print()
 
     app.run(
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=5000,
         debug=True
     )
+

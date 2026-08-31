@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block title %}Member Dashboard - Team Pulse{% endblock %}
+{% block header_title %}My Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>Welcome, {{ current_user.name }}!</h1>
+        <p>Member of <strong>{{ team.name if team else 'Team Pulse' }}</strong>. Here is your task & performance summary.</p>
+    </div>
+    <div class="page-header-actions">
+        <a href="{{ url_for('tasks_list') }}" class="btn btn-primary btn-sm">View My Tasks &rarr;</a>
+    </div>
+</div>
+
+<!-- Personal Score Banner -->
+<div class="card" style="background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); color: white; margin-bottom: 28px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+        <div>
+            <span class="badge" style="background:rgba(255,255,255,0.2); color:white; margin-bottom:8px;">MY PERFORMANCE SCORE</span>
+            <h2 style="font-size: 2rem; font-weight: 800; color: white;">{{ my_points }} Points</h2>
+            <p style="color: rgba(255,255,255,0.85); font-size: 0.9rem; margin-top: 4px;">Earn 10 points for every completed task assigned to you!</p>
+        </div>
+        <div>
+            <a href="{{ url_for('leaderboard') }}" class="btn" style="background:white; color:var(--primary); font-weight:700;">Check Leaderboard Rank</a>
+        </div>
+    </div>
+</div>
+
+<!-- Task Stats Cards Grid -->
+<div class="stats-grid">
+    <div class="stat-card stat-orange">
+        <div class="stat-header">
+            <span class="stat-title">Pending Tasks</span>
+            <div class="stat-icon" style="background:#FEF3C7; color:#F59E0B;">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.pending }}</div>
+        <div class="stat-subtitle">Awaiting action</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-header">
+            <span class="stat-title">In Progress</span>
+            <div class="stat-icon">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.in_progress }}</div>
+        <div class="stat-subtitle">Currently working on</div>
+    </div>
+
+    <div class="stat-card stat-green">
+        <div class="stat-header">
+            <span class="stat-title">Completed Tasks</span>
+            <div class="stat-icon" style="background:#DCFCE7; color:#16A34A;">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.completed }}</div>
+        <div class="stat-subtitle">Tasks completed</div>
+    </div>
+
+    <div class="stat-card stat-red">
+        <div class="stat-header">
+            <span class="stat-title">Overdue Tasks</span>
+            <div class="stat-icon" style="background:#FEE2E2; color:#DC2626;">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.overdue }}</div>
+        <div class="stat-subtitle">Past due date</div>
+    </div>
+</div>
+
+<div class="form-grid" style="grid-template-columns: 2fr 1fr; gap:24px;">
+    <!-- Recent Activity Timeline -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Recent Personal Activity</h2>
+        </div>
+        {% if recent %}
+        <div class="timeline">
+            {% for act in recent %}
+            <div class="timeline-item">
+                <div class="timeline-dot"></div>
+                <div class="timeline-content">
+                    <div style="font-weight:600; color:var(--text-main);">{{ act.activity }}</div>
+                    <div class="timeline-time">{{ act.created_at }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="color:var(--text-muted);">No recent activity recorded.</p>
+        {% endif %}
+    </div>
+
+    <!-- Member Quick Actions -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Quick Actions</h2>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+            <a href="{{ url_for('tasks_list') }}" class="btn btn-secondary" style="justify-content:flex-start;">
+                <svg style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                <span>My Assigned Tasks</span>
+            </a>
+            <a href="{{ url_for('doubts_list') }}" class="btn btn-secondary" style="justify-content:flex-start;">
+                <svg style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                <span>Ask a Doubt</span>
+            </a>
+            <a href="{{ url_for('suggestions_list') }}" class="btn btn-secondary" style="justify-content:flex-start;">
+                <svg style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                <span>Submit Suggestion</span>
+            </a>
+            <a href="{{ url_for('leaderboard') }}" class="btn btn-secondary" style="justify-content:flex-start;">
+                <svg style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
+                <span>Leaderboard</span>
+            </a>
+            <a href="{{ url_for('profile') }}" class="btn btn-secondary" style="justify-content:flex-start;">
+                <svg style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                <span>Edit My Profile</span>
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

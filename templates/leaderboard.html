@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}Leaderboard - Team Pulse{% endblock %}
+{% block header_title %}Performance Leaderboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>Team Performance Leaderboard</h1>
+        <p>Member rankings based on completed task points accumulated across projects.</p>
+    </div>
+</div>
+
+{% if rows and rows|length >= 1 %}
+<!-- Top 3 Podium Grid -->
+<div class="podium-grid">
+    <!-- Rank 2 (Silver) -->
+    {% if rows|length >= 2 %}
+    {% set r2 = rows[1] %}
+    <div class="podium-card rank-2">
+        <div class="podium-crown">🥈</div>
+        <div class="podium-name">{{ r2.name }}</div>
+        <div class="podium-team">{{ r2.team_name or 'Team Member' }}</div>
+        <div class="podium-points">{{ r2.points }} PTS</div>
+    </div>
+    {% endif %}
+
+    <!-- Rank 1 (Gold) -->
+    {% set r1 = rows[0] %}
+    <div class="podium-card rank-1">
+        <div class="podium-crown">🥇</div>
+        <div style="font-size:0.75rem; font-weight:800; color:#CA8A04; text-transform:uppercase; margin-bottom:4px;">TOP PERFORMER</div>
+        <div class="podium-name">{{ r1.name }}</div>
+        <div class="podium-team">{{ r1.team_name or 'Team Member' }}</div>
+        <div class="podium-points" style="background:#EAB308;">{{ r1.points }} PTS</div>
+    </div>
+
+    <!-- Rank 3 (Bronze) -->
+    {% if rows|length >= 3 %}
+    {% set r3 = rows[2] %}
+    <div class="podium-card rank-3">
+        <div class="podium-crown">🥉</div>
+        <div class="podium-name">{{ r3.name }}</div>
+        <div class="podium-team">{{ r3.team_name or 'Team Member' }}</div>
+        <div class="podium-points" style="background:#EA580C;">{{ r3.points }} PTS</div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Full Leaderboard Table -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Complete Member Rankings</h2>
+        <span class="badge badge-info">{{ rows|length }} Member(s) Listed</span>
+    </div>
+
+    {% if rows %}
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th style="width:70px;">Rank</th>
+                    <th>Member Name</th>
+                    <th>Team</th>
+                    <th style="text-align: right;">Total Points</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr {% if current_user and current_user.name == row.name %}style="background-color:#EFF6FF; font-weight:600;"{% endif %}>
+                    <td>
+                        {% if loop.index == 1 %}
+                            <strong style="color:#EAB308;">🥇 1</strong>
+                        {% elif loop.index == 2 %}
+                            <strong style="color:#64748B;">🥈 2</strong>
+                        {% elif loop.index == 3 %}
+                            <strong style="color:#EA580C;">🥉 3</strong>
+                        {% else %}
+                            <span style="color:var(--text-muted);">#{{ loop.index }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <div class="avatar-circle" style="width:30px; height:30px; font-size:0.75rem;">
+                                {{ row.name[:1].upper() }}
+                            </div>
+                            <span style="color:var(--text-main);">
+                                {{ row.name }}
+                                {% if current_user and current_user.name == row.name %}
+                                <span class="badge badge-info" style="margin-left:6px; font-size:0.7rem;">(You)</span>
+                                {% endif %}
+                            </span>
+                        </div>
+                    </td>
+                    <td>{{ row.team_name or 'Unassigned' }}</td>
+                    <td style="text-align: right;">
+                        <strong style="font-size:1.05rem; color:var(--primary);">{{ row.points }} PTS</strong>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted); padding:10px;">No members eligible for leaderboard rankings yet.</p>
+    {% endif %}
+</div>
+
+<!-- Points Explanation Banner -->
+<div class="card" style="background:#F8FAFC; border-color:var(--border-color);">
+    <h3 style="font-size:1rem; font-weight:700; color:var(--text-main); margin-bottom:8px;">💡 How Points Are Earned</h3>
+    <p style="font-size:0.88rem; color:var(--text-muted); line-height:1.6;">
+        Team members automatically earn <strong>10 points</strong> whenever assigned tasks are successfully marked as <strong>Completed</strong>. Points contribute directly to team overall performance metrics and leaderboard standings.
+    </p>
+</div>
+{% endblock %}

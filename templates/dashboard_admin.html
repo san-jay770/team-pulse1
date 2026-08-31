@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Dashboard - Team Pulse{% endblock %}
+{% block header_title %}Team Admin Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>Welcome, {{ current_user.name }}!</h1>
+        <p>Managing {{ team.name if team else 'Your Team' }} performance & team activities.</p>
+    </div>
+    <div class="page-header-actions" style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a href="{{ url_for('user_add') }}" class="btn btn-secondary btn-sm">+ Add User</a>
+        <a href="{{ url_for('task_add') }}" class="btn btn-primary btn-sm">+ Add Task</a>
+    </div>
+</div>
+
+{% if team %}
+<div class="card" style="background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%); color: white; margin-bottom: 28px;">
+    <div style="display:flex; justify-shadow:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+        <div>
+            <span class="badge" style="background: rgba(37,99,235,0.3); color:#93C5FD; margin-bottom: 8px;">TEAM OVERVIEW</span>
+            <h2 style="font-size: 1.5rem; font-weight: 800; color: white;">{{ team.name }}</h2>
+            <p style="color: #94A3B8; font-size: 0.92rem; margin-top: 4px;">{{ team.description or 'No description provided for this team.' }}</p>
+        </div>
+        <div style="background: rgba(255,255,255,0.08); padding: 14px 20px; border-radius: var(--radius-md); text-align: center;">
+            <div style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase;">Team Total Points</div>
+            <div style="font-size: 1.8rem; font-weight: 800; color: #38BDF8;">{{ stats.points }} PTS</div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Admin Team Stats Grid -->
+<div class="stats-grid">
+    <div class="stat-card stat-cyan">
+        <div class="stat-header">
+            <span class="stat-title">Team Members</span>
+            <div class="stat-icon">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.members }}</div>
+        <div class="stat-subtitle">Members in your team</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-header">
+            <span class="stat-title">Total Tasks</span>
+            <div class="stat-icon">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.total_tasks }}</div>
+        <div class="stat-subtitle">Assigned to your team</div>
+    </div>
+
+    <div class="stat-card stat-green">
+        <div class="stat-header">
+            <span class="stat-title">Completed Tasks</span>
+            <div class="stat-icon" style="background:#DCFCE7; color:#16A34A;">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.completed }}</div>
+        <div class="stat-subtitle">Finished tasks</div>
+    </div>
+
+    <div class="stat-card stat-orange">
+        <div class="stat-header">
+            <span class="stat-title">Pending Tasks</span>
+            <div class="stat-icon" style="background:#FEF3C7; color:#F59E0B;">
+                <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+        </div>
+        <div class="stat-value">{{ stats.pending }}</div>
+        <div class="stat-subtitle">Tasks awaiting completion</div>
+    </div>
+</div>
+
+<!-- Quick Action Shortcuts -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Quick Actions & Shortcuts</h2>
+    </div>
+    <div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+        <a href="{{ url_for('users_list') }}" class="btn btn-secondary" style="padding: 18px; display:flex; flex-direction:column; align-items:center; gap:8px;">
+            <svg style="width:28px;height:28px;color:var(--primary);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+            <span>Manage Team Members</span>
+        </a>
+
+        <a href="{{ url_for('tasks_list') }}" class="btn btn-secondary" style="padding: 18px; display:flex; flex-direction:column; align-items:center; gap:8px;">
+            <svg style="width:28px;height:28px;color:var(--primary);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+            <span>Manage Team Tasks</span>
+        </a>
+
+        <a href="{{ url_for('doubts_list') }}" class="btn btn-secondary" style="padding: 18px; display:flex; flex-direction:column; align-items:center; gap:8px;">
+            <svg style="width:28px;height:28px;color:var(--warning);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            <span>Answer Doubts</span>
+        </a>
+
+        <a href="{{ url_for('suggestions_list') }}" class="btn btn-secondary" style="padding: 18px; display:flex; flex-direction:column; align-items:center; gap:8px;">
+            <svg style="width:28px;height:28px;color:var(--secondary);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+            <span>Review Suggestions</span>
+        </a>
+    </div>
+</div>
+{% endblock %}

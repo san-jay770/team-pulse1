@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}User Management - Team Pulse{% endblock %}
+{% block header_title %}User Management{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>User Management</h1>
+        <p>Manage user accounts, roles, team assignments, and permissions.</p>
+    </div>
+    <div class="page-header-actions">
+        <a href="{{ url_for('user_add') }}" class="btn btn-primary">+ Add New User</a>
+    </div>
+</div>
+
+<!-- Search & Filter Toolbar -->
+<div class="filter-card">
+    <form action="{{ url_for('users_list') }}" method="GET" class="filter-form">
+        <div class="filter-item">
+            <input 
+                type="text" 
+                name="q" 
+                class="form-control" 
+                placeholder="Search by name or email..." 
+                value="{{ q or '' }}"
+            >
+        </div>
+
+        {% if current_user.role == 'SUPER_ADMIN' %}
+        <div class="filter-item">
+            <select name="team" class="form-select">
+                <option value="">All Teams</option>
+                {% for team in teams %}
+                <option value="{{ team.id }}" {% if team_filter|string == team.id|string %}selected{% endif %}>{{ team.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+
+        <div class="filter-item">
+            <select name="role" class="form-select">
+                <option value="">All Roles</option>
+                <option value="SUPER_ADMIN" {% if role_filter == 'SUPER_ADMIN' %}selected{% endif %}>Super Admin</option>
+                <option value="ADMIN" {% if role_filter == 'ADMIN' %}selected{% endif %}>Admin</option>
+                <option value="TEAM_MEMBER" {% if role_filter == 'TEAM_MEMBER' %}selected{% endif %}>Team Member</option>
+            </select>
+        </div>
+
+        <div style="display:flex; gap:8px;">
+            <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+            <a href="{{ url_for('users_list') }}" class="btn btn-secondary btn-sm">Reset</a>
+        </div>
+    </form>
+</div>
+
+<!-- Users Table Card -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">User Accounts List</h2>
+        <span class="badge badge-info">{{ users|length }} User(s) Found</span>
+    </div>
+
+    {% if users %}
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Team</th>
+                    <th>Points</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th style="text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <div class="avatar-circle" style="width:32px; height:32px; font-size:0.8rem;">
+                                {{ user.name[:1].upper() }}
+                            </div>
+                            <strong style="color:var(--text-main);">{{ user.name }}</strong>
+                        </div>
+                    </td>
+                    <td>{{ user.email }}</td>
+                    <td>
+                        <span class="role-pill {% if user.role == 'SUPER_ADMIN' %}role-super-admin{% elif user.role == 'ADMIN' %}role-admin{% else %}role-team-member{% endif %}">
+                            {{ user.role.replace('_', ' ') }}
+                        </span>
+                    </td>
+                    <td>{{ user.team_name or 'Unassigned' }}</td>
+                    <td><strong>{{ user.points }}</strong></td>
+                    <td>
+                        <span class="badge {% if user.status == 'Active' %}badge-active{% else %}badge-inactive{% endif %}">
+                            {{ user.status }}
+                        </span>
+                    </td>
+                    <td>{{ user.created_at[:10] if user.created_at else '-' }}</td>
+                    <td style="text-align: right;">
+                        <div style="display:inline-flex; gap:6px;">
+                            <a href="{{ url_for('user_edit', user_id=user.id) }}" class="btn btn-secondary btn-sm">Edit</a>
+                            {% if user.id != current_user.id %}
+                            <form action="{{ url_for('user_delete', user_id=user.id) }}" method="POST" data-confirm="Are you sure you want to delete user '{{ user.name }}'?">
+                                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted); padding:10px;">No users match your criteria.</p>
+    {% endif %}
+</div>
+{% endblock %}

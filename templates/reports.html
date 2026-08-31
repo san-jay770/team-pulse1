@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Reports & Analytics - Team Pulse{% endblock %}
+{% block header_title %}Reports & Analytics{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>Reports & Analytics Dashboard</h1>
+        <p>Export CSV datasets, view team completion trends, and inspect individual member metrics.</p>
+    </div>
+    <div class="page-header-actions" style="display:flex; gap:10px; flex-wrap:wrap;">
+        <form action="{{ url_for('reports_email_excel') }}" method="POST" style="display:inline;">
+            <button type="submit" class="btn btn-primary btn-sm" style="background:#10B981; border-color:#10B981;">
+                <svg style="width:16px;height:16px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                <span>Email Excel Report to Super Admin</span>
+            </button>
+        </form>
+        <a href="{{ url_for('reports_export', kind='tasks') }}" class="btn btn-secondary btn-sm">
+            <svg style="width:16px;height:16px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            <span>Export Tasks CSV</span>
+        </a>
+        <a href="{{ url_for('reports_export', kind='points') }}" class="btn btn-secondary btn-sm">
+            <svg style="width:16px;height:16px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            <span>Export Points CSV</span>
+        </a>
+        <a href="{{ url_for('reports_export', kind='teams') }}" class="btn btn-secondary btn-sm">
+            <svg style="width:16px;height:16px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            <span>Export Teams CSV</span>
+        </a>
+    </div>
+
+</div>
+
+<!-- Team Performance Analytics -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Team Performance Summary</h2>
+    </div>
+    {% if team_perf %}
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Team Name</th>
+                    <th>Total Tasks</th>
+                    <th>Completed</th>
+                    <th>Completion Progress</th>
+                    <th>Completion %</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for team in team_perf %}
+                {% set total = team.total or 0 %}
+                {% set done = team.done or 0 %}
+                {% set pct = (done / total * 100)|round|int if total > 0 else 0 %}
+                <tr>
+                    <td><strong style="color:var(--text-main);">{{ team.name }}</strong></td>
+                    <td>{{ total }}</td>
+                    <td><span class="badge badge-completed">{{ done }} Tasks</span></td>
+                    <td style="min-width:180px;">
+                        <div class="progress-container">
+                            <div class="progress-track">
+                                <div class="progress-fill" style="width: {{ pct }}%;"></div>
+                            </div>
+                        </div>
+                    </td>
+                    <td><strong>{{ pct }}%</strong></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted); padding:10px;">No team performance data available.</p>
+    {% endif %}
+</div>
+
+<!-- Member Performance Breakdown -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Member Performance Breakdown</h2>
+    </div>
+    {% if member_perf %}
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Member Name</th>
+                    <th>Team</th>
+                    <th>Completed Tasks</th>
+                    <th style="text-align: right;">Total Points</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for mem in member_perf %}
+                <tr>
+                    <td>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <div class="avatar-circle" style="width:30px; height:30px; font-size:0.75rem;">
+                                {{ mem.name[:1].upper() }}
+                            </div>
+                            <strong style="color:var(--text-main);">{{ mem.name }}</strong>
+                        </div>
+                    </td>
+                    <td>{{ mem.team_name or 'Unassigned' }}</td>
+                    <td><span class="badge badge-completed">{{ mem.completed }} Done</span></td>
+                    <td style="text-align: right;">
+                        <strong style="color:var(--primary); font-size:1.05rem;">{{ mem.points }} PTS</strong>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted); padding:10px;">No member performance data available.</p>
+    {% endif %}
+</div>
+{% endblock %}
